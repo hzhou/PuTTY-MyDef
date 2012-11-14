@@ -1,0 +1,194 @@
+
+# ---- Term ---------------------
+subcode:: on_term_power_on
+    $.app_keypad_keys = $.cfg.app_keypad;
+subcode: term_do_DECKPAM
+    term->app_keypad_keys=1
+subcode: term_do_DECKPNM
+    term->app_keypad_keys=0
+
+# ---- vt52 -----------------------------------
+subcode:: on_translate_home_keys
+    $if term->vt52_mode
+	p += sprintf((char *) p, "\x1B%c", " HLMEIG"[tn_code]);
+	goto finish_return
+    $if cfg.funky_type == FUNKY_SCO 
+	$if tn_code == 3
+	    *p++ = '\x7F';
+	$else
+	    p += sprintf((char *) p, "\x1B[%c", "HL.FIG"[tn_code-1]);
+	goto finish_return
+    $if cfg.rxvt_homeend && (tn_code == 1 || tn_code == 4)
+	p += sprintf((char *) p, tn_code == 1 ? "\x1B[H" : "\x1BOw");
+	goto finish_return
+
+subcode:: on_translate_Fkey
+    $if cfg.funky_type==FUNKY_SCO
+	$call out_fkey_SCO
+    $if term->vt52_mode || cfg.funky_type==FUNKY_VT100P
+	$call out_fkey_P
+    $if cfg.funky_type == FUNKY_LINUX && tn_code<=4
+	$call out_fkey_A
+    $if cfg.funky_type == FUNKY_XTERM && tn_code <= 3
+	$call out_fkey_P
+
+subcode: check_Fkey_SCO
+    $if tn_code>0
+subcode: out_fkey_SCO
+    tn_code--
+    tn_code+=tn_shift*12
+    p += sprintf((char *) p, "\x1B[%c", "MNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@[\\]^_`{"[tn_code]);
+    goto finish_return
+subcode: out_fkey_A
+    p += sprintf((char *) p, "\x1B[[%c", tn_code -1 + 'A')
+    goto finish_return
+subcode: out_fkey_P
+    $if term->vt52_mode
+	p += sprintf((char *) p, "\x1B%c", tn_code -1 + 'P')
+    $else
+	p += sprintf((char *) p, "\x1BO%c", tn_code -1 + 'P')
+    goto finish_return
+
+subcode: check_Fkey_code_2
+    $switch wparam
+        $call code_shift, F1, 23, 11
+        $call code_shift, F2, 24, 12
+        $call code_shift, F3, 25, 13
+        $call code_shift, F4, 26, 14
+        $call code_shift, F5, 28, 15
+        $call code_shift, F6, 29, 17
+        $call code_shift, F7, 31, 18
+        $call code_shift, F8, 32, 19
+        $call code_shift, F9, 33, 20
+        $call code_shift, F10, 34, 21
+        $call code_normal, F11, 23
+        $call code_normal, F12, 24
+        $call code_normal, F13, 25
+        $call code_normal, F14, 26
+        $call code_normal, F15, 28
+        $call code_normal, F16, 29
+        $call code_normal, F17, 31
+        $call code_normal, F18, 32
+        $call code_normal, F19, 33
+        $call code_normal, F20, 34
+    $if tn_code>0
+	$call out_fkey_code
+
+# ---- Keyboard side ---------------------
+# -- Application Keypad ------------------------
+subcode: check_application_key
+    $if cfg.funky_type == FUNKY_VT400 || (cfg.funky_type <= FUNKY_LINUX && term->app_keypad_keys && !cfg.no_applic_k) 
+	$switch wparam
+	    $call xkey, EXECUTE, P
+	    $call xkey, DIVIDE, Q
+	    $call xkey, MULTIPLY, R
+	    $call xkey, SUBTRACT, S
+    $if term->app_keypad_keys && !cfg.no_applic_k
+	$switch wparam
+	    $call xkey, NUMPAD0, p
+	    $call xkey, NUMPAD1, q
+	    $call xkey, NUMPAD2, r
+	    $call xkey, NUMPAD3, s
+	    $call xkey, NUMPAD4, t
+	    $call xkey, NUMPAD5, u
+	    $call xkey, NUMPAD6, v
+	    $call xkey, NUMPAD7, w
+	    $call xkey, NUMPAD8, x
+	    $call xkey, NUMPAD9, y
+	    $call xkey, DECIMAL, n
+	    $call xkey_cond, DIVIDE, o, cfg.funky_type == FUNKY_XTERM
+	    $call xkey_cond, MULTIPLY, j, cfg.funky_type == FUNKY_XTERM
+	    $call xkey_cond, SUBTRACT, m, cfg.funky_type == FUNKY_XTERM
+	    $call xkey_cond, RETURN, M, $(kf:EXTENDED)
+	    case VK_ADD:
+		$if cfg.funky_type == FUNKY_XTERM
+		    $if tn_shift
+			tn_code = 'l';
+		    $else
+			tn_code = 'k';
+		$else
+		    $if tn_shift
+			tn_code = 'm';
+		    $else
+			tn_code = 'l';
+		break
+    $if tn_code
+	$if term->vt52_mode
+	    $if tn_code >= 'P' && tn_code <= 'S'
+		p += sprintf((char *) p, "\x1B%c", tn_code);
+	    else
+		p += sprintf((char *) p, "\x1B?%c", tn_code);
+	$else
+	    p += sprintf((char *) p, "\x1BO%c", tn_code);
+	goto finish_return
+
+##########################
+fncode: n_TranslateKey(UINT message, WPARAM wparam, LPARAM lparam)
+    $local pc_out[100]
+    $local unsigned char * p
+    p=pc_out
+    $(set:vk=(keystate[VK_$(1)]&0x80))
+    $(set:nvk=((keystate[VK_$(1)]&0x80)==0))
+    $(set:kf=(HIWORD(lparam)&KF_$(1)))
+    $(set:nkf=((HIWORD(lparam)&KF_$(1))==0))
+
+    $call grab_keystate
+    # $call check_auto_repeat
+    $call ignore_alt_only
+
+    $call update_compose_state
+
+    $if tn_key_down && $(nvk:RMENU) && !compose_state
+	$if tn_left_alt_down
+	    *p++ = '\033';
+	$call check_known_key_message
+	$call check_known_key_translation
+	tn_code = 0
+	$call check_home_keys
+	$call check_arrow_keys
+	$call check_Fkey_code_1
+	$call check_Fkey_code_2
+	$call check_return
+	# -- Numeric Keypad --
+	$if tn_left_alt_down
+	    $call check_alt_sum_down
+	$else
+	    $call check_nethack
+	    $call check_application_key
+
+    # -- Windows api to translate keys --
+    tn_scan = (HIWORD(lparam) & (KF_UP | KF_EXTENDED | 0xFF));
+    tn_ret = ToAsciiEx(wparam, tn_scan, keystate, keys, 0, GetKeyboardLayout(0))
+    $if tn_ret>0
+	term_nopaste(term);
+	p = pc_out;
+
+	$for i=0:tn_ret
+	    $local unsigned char ch
+	    ch=(unsigned char)keys[i]
+	    $call check_compose_key
+	    $if !tn_key_down
+		$if tn_alt_sum
+		    $call check_alt_sum_up
+		$else
+		    term_seen_key_event(term);
+		    linedisc_send_codepage(kbd_codepage, &ch, 1)
+	    $else
+		$local char cbuf[2]
+		cbuf[0] = '\033';
+		cbuf[1] = ch;
+		term_seen_key_event(term);
+		$if tn_left_alt_down
+		    linedisc_send_codepage(kbd_codepage, cbuf, 2);
+		$else
+		    linedisc_send_codepage(kbd_codepage, cbuf+1, 1);
+	    show_mouseptr(0);
+	goto finish_return
+    $else
+	return -1;
+
+    finish_return:
+	tn_ret=p-pc_out
+    finish_return_special:
+	$call return_out
+

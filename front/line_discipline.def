@@ -1,0 +1,304 @@
+subcode:: function_list
+    $define(CTRL(x)) (x^'@')
+    $define(KCTRL(x)) ((x^'@')|0x100)
+
+    # $define(ECHOING) (cfg.localecho==FORCE_ON||(cfg.localecho==AUTO&&(back->ldisc(backhandle,LD_ECHO))))
+    # $define(EDITING) (cfg.localedit==FORCE_ON||(cfg.localedit==AUTO&&(back->ldisc(backhandle,LD_EDIT))))
+    $define(ECHOING) cfg.localecho==FORCE_ON
+    $define(EDITING) cfg.localedit==FORCE_ON
+    $define(in_utf) line_codepage==CP_UTF8
+
+subcode: c_write(buf, len)
+    term_data(term, $(buf), $(len))
+
+# ===============================================================
+subcode:: function_list
+    $global s_ldisc_buf=NULL, n_ldisc_len=0, n_ldisc_size=0
+    $global b_ldisc_quotenext=0
+    $global b_ldisc_special
+    $list ldisc_update, linedisc_send, linedisc_send_special, ldisc_edit
+    $list get_plen, do_pwrite
+
+subcode: line_discipline_init
+    $(set:ldisc=(void *)1)
+    $if back
+	back->provide_ldisc(backhandle, $(ldisc))
+
+subcode: line_discipline_free
+    $if back
+	back->provide_ldisc(backhandle, NULL);
+    $if s_ldisc_buf
+	sfree(s_ldisc_buf)
+
+fncode: ldisc_update(void * frontend, int echo, int edit)
+#fncode: ldisc_update
+    $call @line_discipline_update
+    return
+
+fncode: linedisc_send(s_buf, n_len)
+    $if !back
+	return
+    $if n_len>0
+	$if EDITING
+	    ldisc_edit(s_buf, n_len)
+	$else
+	    $if ECHOING
+		$call c_write, s_buf, n_len
+	    back->send(backhandle, s_buf, n_len)
+
+fncode: linedisc_send_special(s_buf, n_len)
+    $if EDITING
+	b_ldisc_special=0x100
+	ldisc_edit(s_buf, n_len)
+	b_ldisc_special=0
+    $elif cfg.protocol == PROT_TELNET && n_len == 1
+	$call ldisc_telnet_special
+    $else
+	back->send(backhandle, s_buf, n_len)
+
+# ------------------------------------------------------
+fncode: ldisc_edit(s_buf, n_len)
+    $while n_len--
+	tn_char = (unsigned char)(*s_buf++) + b_ldisc_special
+	$if b_ldisc_quotenext
+	    $call ldisc_do_default
+	$else
+	    $call ldisc_do_switch
+
+# ----
+subcode: ldisc_do_switch
+    $(set:c0=(unsigned char)s_ldisc_buf[n_ldisc_len])
+    $(set:c1=(unsigned char)s_ldisc_buf[n_ldisc_len-1])
+    $switch tn_char
+	case CTRL('V'):	       /* quote next char */
+	    b_ldisc_quotenext = TRUE;
+	    break;
+	case KCTRL('H'):
+	case KCTRL('?'):
+	    $call ldisc_do_backspace
+	case CTRL('W'):	       /* delete word */
+	    $call ldisc_do_del_word
+	case CTRL('U'):	       /* delete line */
+	case CTRL('C'):	       /* Send IP */
+	case CTRL('\\'):	       /* Quit */
+	case CTRL('Z'):	       /* Suspend */
+	    $call ldisc_do_special
+	case CTRL('R'):	       /* redraw line */
+	    $if ECHOING
+		$call c_write, "^R\r\n", 4
+		$for i = 0:n_ldisc_len
+		    do_pwrite(s_ldisc_buf[i]);
+	    break;
+	case CTRL('D'):	       /* logout or send */
+	    $call ldisc_do_ctrl_D
+	case CTRL('J'):
+	    $call ldisc_do_ctrl_MJ
+	case KCTRL('M'):	       /* send with newline */
+	    $call ldisc_do_magic_ctrl_M
+	default:
+	    $call ldisc_do_default
+	    break;
+
+subcode: ldisc_do_default
+    $if n_ldisc_len >= n_ldisc_size
+	n_ldisc_size = n_ldisc_len + 256;
+	s_ldisc_buf = sresize(s_ldisc_buf, n_ldisc_size, char);
+    s_ldisc_buf[n_ldisc_len++] = tn_char
+    $if ECHOING
+	do_pwrite((unsigned char) tn_char)
+    b_ldisc_quotenext = FALSE;
+
+subcode: ldisc_do_magic_ctrl_M
+    $if n_ldisc_len > 0
+	back->send(backhandle, s_ldisc_buf, n_ldisc_len);
+
+    $if cfg.protocol == PROT_RAW
+	back->send(backhandle, "\r\n", 2);
+    $elif cfg.protocol == PROT_TELNET && cfg.telnet_newline
+	back->special(backhandle, TS_EOL);
+    $else
+	back->send(backhandle, "\r", 1);
+
+    $if ECHOING
+	$call c_write, "\r\n", 2
+
+    n_ldisc_len = 0;
+    break;
+
+subcode: ldisc_do_ctrl_MJ
+    $if cfg.protocol == PROT_RAW && n_ldisc_len > 0 && s_ldisc_buf[n_ldisc_len - 1] == '\r'
+	$call bsb
+	$call ldisc_do_magic_ctrl_M
+    $else
+	$call ldisc_do_default
+
+subcode: ldisc_do_backspace
+    $if n_ldisc_len > 0
+	$while 1
+	    $call bsb
+	    $call check_char_start
+    break;
+
+subcode: check_char_start
+    $(set:c=s_ldisc_buf[n_ldisc_len])
+    $if in_utf
+	$if $(c) < 0x80 || $(c) >= 0xC0
+	    break
+    $else
+	break
+
+subcode: ldisc_do_del_word
+    $while n_ldisc_len > 0
+	$call bsb
+	$if n_ldisc_len > 0 && isspace($(c1)) && !isspace($(c0))
+	    break
+    break
+
+subcode: ldisc_do_special
+    $while n_ldisc_len > 0
+	$call bsb
+    back->special(backhandle, TS_EL);
+    $if !cfg.telnet_keyboard
+	$call ldisc_do_default
+    $elif tn_char == CTRL('C')
+	back->special(backhandle, TS_IP);
+    $elif tn_char == CTRL('Z')
+	back->special(backhandle, TS_SUSP);
+    $elif tn_char == CTRL('\\')
+	back->special(backhandle, TS_ABORT);
+    break;
+
+subcode: ldisc_do_ctrl_D
+    $if n_ldisc_len == 0
+	back->special(backhandle, TS_EOF);
+    $else
+	back->send(backhandle, s_ldisc_buf, n_ldisc_len);
+	n_ldisc_len = 0;
+    break;
+
+# ----------------------------------------------------------------------------
+subcode: ldisc_telnet_special
+    $if cfg.telnet_keyboard
+	$switch s_buf[0]
+	    case CTRL('?'):
+	    case CTRL('H'):
+		back->special(backhandle, TS_EC);
+		break;
+	    case CTRL('C'):
+		back->special(backhandle, TS_IP);
+		break;
+	    case CTRL('Z'):
+		back->special(backhandle, TS_SUSP);
+		break;
+	    default:
+		back->send(backhandle, s_buf, n_len);
+    $else
+	$if s_buf[0]==CTRL('M')
+	    $if cfg.protocol == PROT_TELNET && cfg.telnet_newline
+		back->special(backhandle, TS_EOL);
+	    $else
+		back->send(backhandle, "\r", 1);
+	$else
+	    back->send(backhandle, s_buf, n_len);
+# ------------------------------------------------------------
+fncode: get_plen(unsigned char c)
+    $if (c >= 32 && c <= 126) || (c >= 160 && !in_utf)
+	return 1
+    $elif c < 128
+	# ^X
+	return 2
+    $elif in_utf && c >= 0xC0
+        /* UTF-8 introducer character * (FIXME: combining / wide chars) */
+	return 1
+    $elif in_utf && c >= 0x80 && c < 0xC0
+	/* UTF-8 followup character */
+	return 0
+    $else
+        /* <XY> hex representation */
+	return 4
+
+subcode: bsb
+    $if ECHOING
+	n=get_plen(s_ldisc_buf[n_ldisc_len-1])
+	$for i=0:n
+	    $call c_write, "\010 \010", 3
+    n_ldisc_len--
+
+fncode: do_pwrite(unsigned char c)
+    $if (c >= 32 && c <= 126) || (!in_utf && c >= 0xA0) || (in_utf && c >= 0x80)
+	$call c_write, (char *)&c, 1
+    $elif c < 128 
+	char cc[2];
+	cc[1] = (c == 127 ? '?' : c + 0x40);
+	cc[0] = '^';
+	$call c_write, cc, 2
+    $else
+	char cc[5];
+	sprintf(cc, "<%02X>", c);
+	$call c_write, cc, 4
+
+# -------------------------------------------------------------------------
+subcode:: function_list
+    $list linedisc_send_codepage, linedisc_send_unicode
+
+fncode: linedisc_send_codepage(n_codepage, s_buf, n_len)
+    $local wchar_t *p_wbuf
+
+    $if n_codepage<0
+	linedisc_send(s_buf, n_len)
+	return
+    $else
+	tn_size = n_len*2
+	$local_allocate(tn_size) p_wbuf
+	tn_wlen = mb_to_wc(n_codepage, 0, s_buf, n_len, p_wbuf, tn_size)
+	linedisc_send_unicode(p_wbuf, tn_wlen)
+
+fncode: linedisc_send_unicode(wchar_t *p_wbuf, n_len)
+    tn_ratio=1
+    $if in_utf
+	tn_ratio=3
+    tn_linesize =n_len * tn_ratio * 2
+    $local_allocate(tn_linesize) ts_line
+
+    $if in_utf
+	$call ldisc_send_utf
+    $else
+	tn_ret = wc_to_mb(line_codepage, p_wbuf, n_len, ts_line, tn_linesize)
+	$if tn_ret>0
+	    linedisc_send(ts_line, tn_ret)
+
+subcode: check_utf16
+    $if (tn_ch & 0xF800) == 0xD800
+	# in utf16, 0xD800 marks high surrogate and 0xDC00 marks  low surrogate
+	$if i< n_len-1
+	    unsigned long tn_ch2 = p_wbuf[i+1]
+	    $if (tn_ch & 0xFC00) == 0xD800 && (tn_ch2 & 0xFC00) == 0xDC00
+		tn_ch = 0x10000 + ((tn_ch & 0x3FF) << 10) + (tn_ch2 & 0x3FF)
+		i++;
+	$else
+	    ch = '.';
+
+subcode: ldisc_send_utf
+    $local char * p
+    p=ts_line
+    $for i=0:n_len
+	$local unsigned long tn_ch
+	tn_ch=p_wbuf[i]
+	$call check_utf16
+	# send utf8
+	$if tn_ch < 0x80
+	    *p++ = (char) (tn_ch)
+	$elif tn_ch < 0x800
+	    *p++ = (char) (0xC0 | (tn_ch >> 6));
+	    *p++ = (char) (0x80 | (tn_ch & 0x3F));
+	$elif tn_ch < 0x10000
+	    *p++ = (char) (0xE0 | (tn_ch >> 12));
+	    *p++ = (char) (0x80 | ((tn_ch >> 6) & 0x3F));
+	    *p++ = (char) (0x80 | (tn_ch & 0x3F));
+	$else
+	    *p++ = (char) (0xF0 | (tn_ch >> 18));
+	    *p++ = (char) (0x80 | ((tn_ch >> 12) & 0x3F));
+	    *p++ = (char) (0x80 | ((tn_ch >> 6) & 0x3F));
+	    *p++ = (char) (0x80 | (tn_ch & 0x3F));
+    $if p > ts_line
+	linedisc_send(ts_line, p - ts_line)

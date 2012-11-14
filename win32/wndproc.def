@@ -1,0 +1,202 @@
+subcode:: function_list
+    $declare void term_update(TERM)
+    $declare void term_invalidate_rect(TERM, int, int, int, int)
+#---- System -------------------------------------------------------
+subcode: main_on_WM_CLOSE
+    show_mouseptr(1);
+    $tempstr "$appname Exit Confirmation"
+    $if !cfg.warn_on_close || session_closed
+	DestroyWindow(hwnd)
+    $elif MessageBox(hwnd, "Are you sure you want to close this session?", ts_temp_buf, MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON1) == IDOK
+	DestroyWindow(hwnd)
+    return 0;
+
+subcode: main_on_WM_DESTROY
+    show_mouseptr(1)
+    PostQuitMessage(0)
+    return 0
+
+subcode:: main_on_WM_SETFOCUS
+    $call term_focus, 1
+    CreateCaret(hwnd, caretbm, font_width, font_height);
+    ShowCaret(hwnd);
+    flash_window(0);
+    term_update(term);
+
+subcode: main_on_WM_KILLFOCUS
+    show_mouseptr(1);
+    $call term_focus, 0
+    DestroyCaret();
+    caret_x = caret_y = -1 # ensure caret is replaced next time 
+    term_update(term);
+
+#---- Paint -------------------------------------------------------
+subcode: main_on_WM_PAINT
+    $local PAINTSTRUCT ps
+    $local HDC hdc
+    HideCaret(hwnd);
+    hdc = BeginPaint(hwnd, &ps);
+    $call @WM_PAINT_palette
+    tn_chr_l=(ps.rcPaint.left-offset_width)/font_width
+    tn_chr_r=(ps.rcPaint.right-offset_width-1)/font_width
+    tn_chr_t=(ps.rcPaint.top-offset_height)/font_height
+    tn_chr_b=(ps.rcPaint.bottom-offset_height-1)/font_height
+
+    term_invalidate_rect(term, tn_chr_l, tn_chr_t, tn_chr_r, tn_chr_b)
+
+    $if ps.fErase || ps.rcPaint.left  < offset_width  || ps.rcPaint.top   < offset_height || ps.rcPaint.right >= offset_width + font_width*n_cols || ps.rcPaint.bottom>= offset_height + font_height*n_rows
+	$call paint_background
+
+    SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    SelectObject(hdc, GetStockObject(WHITE_PEN));
+    EndPaint(hwnd, &ps);
+    ShowCaret(hwnd);
+    return 0;
+
+subcode: paint_background
+    $local COLORREF color_defbg_temp
+    color_defbg_temp=colours[ATTR_DEFBG>>ATTR_BGSHIFT]
+    $call quick_brush, color_defbg_temp
+    $call quick_pen, color_defbg_temp
+    IntersectClipRect(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom); 
+    ExcludeClipRect(hdc, offset_width, offset_height, offset_width+font_width*n_cols, offset_height+font_height*n_rows);
+    Rectangle(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom);
+
+# -- Commands -------------------------------------------------------
+subcode: on_IDM_SHOWLOG
+    showeventlog(hwnd)
+
+subcode: spawn_session(cmdline, inherit_handles)
+    $local char b[2048]
+    GetModuleFileName(NULL, b, sizeof(b) - 1);
+    $local STARTUPINFO info_startup
+    info_startup.cb = sizeof(info_startup);
+    info_startup.lpReserved = NULL;
+    info_startup.lpDesktop = NULL;
+    info_startup.lpTitle = NULL;
+    info_startup.dwFlags = 0;
+    info_startup.cbReserved2 = 0;
+    info_startup.lpReserved2 = NULL;
+    $local PROCESS_INFORMATION info_process
+    CreateProcess(b, $(cmdline), NULL, NULL, $(inherit_handles), NORMAL_PRIORITY_CLASS, NULL, NULL, &info_startup, &info_process);
+
+subcode: on_IDM_NEWSESS
+    $call spawn_session, NULL, FALSE
+
+subcode: on_IDM_DUPSESS
+    $local SECURITY_ATTRIBUTES sa
+    $local HANDLE filemap
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = NULL;
+    sa.bInheritHandle = TRUE;
+    filemap = NULL
+    filemap = CreateFileMapping(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(Config), NULL);
+    $if filemap && filemap != INVALID_HANDLE_VALUE
+	$local Config *tp_config
+	tp_config = (Config *) MapViewOfFile(filemap, FILE_MAP_WRITE, 0, 0, sizeof(Config));
+	$if tp_config
+	    *tp_config = cfg
+	    UnmapViewOfFile(tp_config);
+	sprintf(ts_temp_buf, "putty &%p", filemap);
+	$call spawn_session, ts_temp_buf, TRUE
+	CloseHandle(filemap)
+    $else
+	break
+
+subcode: open_savedsession(n)
+    $if $(n) < sesslist.nsessions
+	sprintf(ts_temp_buf, "putty @%s", sesslist.sessions[$(n)]);
+	$call spawn_session, ts_temp_buf, FALSE
+    $else
+	break
+
+subcode: on_IDM_COPYALL
+    $declare void term_copyall(TERM)
+    term_copyall(term);
+
+subcode: on_IDM_PASTE
+    request_paste(NULL);
+
+subcode: on_IDM_CLRSB
+    $declare void term_clrsb(TERM)
+    term_clrsb(term)
+
+subcode: on_IDM_RESET
+    $declare void term_pwron(TERM, int)
+    term_pwron(term, TRUE)
+
+subcode: on_IDM_RESTART
+    $if !back
+	logevent(NULL, "----- Session restarted -----");
+	term_pwron(term, FALSE);
+	start_backend();
+
+subcode: on_IDM_ABOUT
+    showabout(hwnd)
+
+subcode: on_IDM_HELP
+    launch_help(hwnd, NULL);
+
+# ---------------------------------------------------
+subcode: caseIDM(name)
+    case IDM_$(name):
+	$call on_IDM_$(name)
+	return 0
+
+# ---------------------------------------------------
+subcode: on_SC_MOUSEMENU
+    show_mouseptr(1);
+
+subcode: on_SC_KEYMENU:
+    show_mouseptr(1)
+    $if lparam == 0
+	PostMessage(hwnd, WM_CHAR, ' ', 0);
+
+subcode: caseSC(name)
+    case SC_$(name):
+	$call on_SC_$(name)
+	break
+
+subcode: main_on_WM_ALLCOMMAND
+    $switch wparam & ~0xf
+	$map caseIDM, subcode:on_IDM_
+	$map caseSC, subcode:on_SC_
+	default:
+	    $if wparam >= IDM_SAVED_MIN && wparam < IDM_SAVED_MAX
+		n = ((wparam - IDM_SAVED_MIN) / IDM_SAVED_STEP) + 1;
+		$call open_savedsession, n
+	    $if wparam >= IDM_SPECIAL_MIN && wparam <= IDM_SPECIAL_MAX
+		n = (wparam - IDM_SPECIAL_MIN) / 0x10;
+		$if n >= n_specials
+		    break;
+		$if back
+		    back->special(backhandle, specials[n].code);
+		net_pending_errors();
+
+# -- Features -------------------------------------------------------
+# ---- Other -----------------------------------------------------------
+subcode: main_on_WM_VSCROLL
+    $switch LOWORD(wparam)
+	case SB_BOTTOM:
+		term_scroll(term, -1, 0);
+		break;
+	case SB_TOP:
+		term_scroll(term, +1, 0);
+		break;
+	case SB_LINEDOWN:
+		term_scroll(term, 0, +1);
+		break;
+	case SB_LINEUP:
+		term_scroll(term, 0, -1);
+		break;
+	case SB_PAGEDOWN:
+		term_scroll(term, 0, +n_rows / 2);
+		break;
+	case SB_PAGEUP:
+		term_scroll(term, 0, -n_rows / 2);
+		break;
+	case SB_THUMBPOSITION:
+	case SB_THUMBTRACK:
+		term_scroll(term, 1, HIWORD(wparam));
+		break;
+

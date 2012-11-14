@@ -1,0 +1,212 @@
+include: term/to_action.def
+include: term/to_utf.def
+include: term/to_beep.def
+include: term/to_print.def
+include: term/to_csi.def
+include: term/to_osc.def
+include: term/to_log.def
+
+# #### term in ##############################################
+subcode:: function_list
+    $list term_data, term_data_untrusted
+
+subcode:: on_term_init
+    $map term_decl, b_in_term_out, bufchain inbuf
+    $.b_in_term_out=0
+    bufchain_init(&$.inbuf);
+
+subcode:: on_term_finish
+    bufchain_clear(&$.inbuf);
+
+fncode: term_data(Terminal *term, ts_data, tn_len)
+    bufchain_add(&$.inbuf, ts_data, tn_len);
+    $if !$.b_in_term_out && $.selstate != DRAGGING
+	$.b_in_term_out = TRUE;
+	term_out(term)
+	$.b_in_term_out = FALSE;
+    return 0;
+
+fncode: term_data_untrusted(Terminal *term, ts_data, tn_len)
+    $for i=0:tn_len
+	$if ts_data[i] == '\n'
+	    term_data(term, "\r\n", 2)
+	$elif ts_data[i] & 0x60
+	    # non-control char
+	    term_data(term, ts_data + i, 1);
+    return 0
+
+# #### term out ##############################################
+subcode:: on_term_init
+    $map term_decl, n_termstate
+    $map term_decl, n_state_2
+    $.n_termstate = termstate_TOPLEVEL;
+    $enumbase(termstate) TOPLEVEL, SEEN_ESC, SEEN_CSI, SEEN_OSC, SEEN_QUERY, DO_CTRLS, PRINTING
+    # $define(TM_PUTTY) 0xFFFF
+    # $.compatibility_level = TM_PUTTY;
+
+subcode:: function_list
+    $list term_out
+
+fncode: term_out(Terminal *term)
+    $call @term_out_global
+    $while 1
+	$call term_out_get_c
+	# printf("termstate=%d, c=%x [%c]\n", $.n_termstate, c, (char)c);
+	$if $.n_termstate==termstate_PRINTING
+	    $call term_out_printing
+	    continue;
+	$if $.n_termstate == termstate_TOPLEVEL
+	    $call term_out_filter
+
+	$call @term_out_check_C1_control
+
+	$if c=='\033'
+	    $.n_termstate = termstate_SEEN_ESC
+	$elif (c&~0x1F)== 0||c=='\177' && $.n_termstate < termstate_DO_CTRLS
+	    $call term_out_C0_Control
+	$elif $.n_termstate == termstate_TOPLEVEL
+	    $call term_do_CHAR
+	$elif $.n_termstate==termstate_SEEN_ESC
+	    $call term_out_SEEN_ESC
+	$elif $.n_termstate==termstate_SEEN_CSI
+	    $call term_out_SEEN_CSI
+	$elif $.n_termstate==termstate_SEEN_OSC
+	    $call term_out_SEEN_OSC
+	$else
+	    $.n_termstate=termstate_TOPLEVEL
+	$call @check_deselect_curs
+    $call @term_out_flush
+
+# ----------------------------
+subcode: term_out_get_c
+    $local unsigned long c
+    $local tn_unget = -1;
+    $local n_chars_in_buffer=0
+    $if tn_unget == -1
+	$if n_chars_in_buffer == 0
+	    $call term_out_load
+	c = *s_localbuf++;
+	n_chars_in_buffer--;
+	$call @term_out_log
+    $else
+	c = tn_unget;
+	tn_unget = -1;
+
+subcode: term_out_load
+    $local unsigned char localbuf[256]
+    $local unsigned char  * s_localbuf
+    $local void * tp_tmp_data
+    $if bufchain_size(&$.inbuf)>0
+	bufchain_prefix(&$.inbuf, &tp_tmp_data, &n_chars_in_buffer);
+	$if n_chars_in_buffer > sizeof(localbuf)
+	    n_chars_in_buffer = sizeof(localbuf);
+	memcpy(localbuf, tp_tmp_data, n_chars_in_buffer);
+	bufchain_consume(&$.inbuf, n_chars_in_buffer);
+	s_localbuf = localbuf;
+    $else
+	break
+
+# ----------------------------
+subcode: switch_c(case, name)
+    case $(case):
+	$call term_do_$(name)
+	break;
+
+subcode: term_out_C0_Control
+    $switch c
+	$call switch_c, '\177', DEL
+	$call switch_c, '\005', ENQ
+	$call switch_c, '\007', BEL
+	$call switch_c, '\010', BS
+	$call switch_c, '\011', HT
+	$call switch_c, '\012', LF
+	$call switch_c, '\013', VT
+	$call switch_c, '\014', FF
+	$call switch_c, '\015', CR
+	$call switch_c, '\016', S1
+	$call switch_c, '\017', S0
+	case '\033':
+	default:
+	    $.n_termstate = termstate_TOPLEVEL
+	    break;
+# ----------------------------------------------------------------
+subcode:: on_term_init
+    $define(ARGS_MAX) 32
+    $map term_decl, n_esc_args, pn_esc_args[ARGS_MAX]
+    $.n_esc_args=0
+    $.pn_esc_args[ARGS_MAX]
+
+subcode: term_ESC_default(n)
+    $if !$.pn_esc_args[0]
+	$.pn_esc_args[0]=$(n)
+
+subcode: term_ESC_default_2(n1, n2)
+    $if !$.pn_esc_args[0]
+	$.pn_esc_args[0]=$(n1)
+    $if !$.pn_esc_args[1]
+	$.pn_esc_args[1]=$(n2)
+
+subcode: term_out_SEEN_ESC
+    $.n_termstate = termstate_TOPLEVEL
+    $if c >= ' ' && c <= '/'
+	$.n_state_2=c
+	$.n_termstate = termstate_SEEN_QUERY
+    $elif c=='['
+	$call term_out_start_CSI
+    $elif c==']'
+	$call term_out_start_OSC
+    $else
+	$switch c
+	    $call switch_c, '7', DECSC
+	    $call switch_c, '8', DECRC
+	    # $call switch_c, '=', DECKPAM
+	    # $call switch_c, '>', DECKPNM
+	    $call switch_c, 'D', IND
+	    $call switch_c, 'E', NEL
+	    $call switch_c, 'M', RI
+	    $call switch_c, 'Z', DECID
+	    $call switch_c, 'c', RIS
+	    $call switch_c, 'H', HTS
+
+# --------------------------------------------------------------
+subcode: term_out_SEEN_QUERY
+    $.n_termstate = termstate_TOPLEVEL
+    $if $.n_state_2 == ' '
+	# F G L M N  -- Conformance Switch
+    $elif $.n_state_2 == '#'
+	# 3 4 5 6 8  -- Hight, Width, 'E' alignment
+    $elif $.n_state_2 == '%'
+	# @ G        -- Default and UTF8 Charset
+    $elif $.n_state_2 == '('
+	# -- Switch Charset G0
+	# 0 LineDrawing
+	# A UK # B US
+	# 4 Dutch   5|C Finnish   R French   Q French Canadian
+	# K German    Y Italian   6|E Norwegian/Danish
+	# Z Spanish 7|H Swidish   = Swiss
+    $elif $.n_state_2 == ')'
+	# -- Switch Charset G1
+    $elif $.n_state_2 == '*'
+	# -- Switch Charset G2 (VT220)
+    $elif $.n_state_2 == '+'
+	# -- Switch Charset G3 (VT220)
+    $elif $.n_state_2 == '-'
+	# -- Switch Charset G1 (VT300)
+    $elif $.n_state_2 == '.'
+	# -- Switch Charset G2 (VT300)
+    $elif $.n_state_2 == '/'
+	# -- Switch Charset G3 (VT300)
+
+# #######################################################################
+# -------------------------------------------------------------------
+subcode: term_out_filter
+    $if line_codepage==CP_UTF8
+	$call term_out_filter_utf8
+    $elif $.sco_acs && (c!='\033' && c!='\012' && c!='\015' && c!='\b')
+        $if $.sco_acs == 2
+	    c |= 0x80;
+        c |= CSET_SCOACS;
+    $else
+	tn_cset=$.cset_attr[$.cset]
+	$call encode_cset, c, tn_cset
+

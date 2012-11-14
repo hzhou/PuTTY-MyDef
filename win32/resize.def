@@ -1,0 +1,395 @@
+subcode:: function_list
+    $(export:rctw=(rct_$(1).right-rct_$(1).left))
+    $(export:rcth=(rct_$(1).bottom-rct_$(1).top))
+    $(export:rctwe=(rct_$(1).right-rct_$(1).left-extra_width))
+    $(export:rcthe=(rct_$(1).bottom-rct_$(1).top-extra_height))
+
+    $(export:calc_ow=(tn_w-font_width*n_cols)/2)
+    $(export:calc_oh=(tn_h-font_height*n_rows)/2)
+
+    $(export:calc_tw=(font_width*n_cols+offset_width*2))
+    $(export:calc_th=(font_height*n_rows+offset_height*2))
+    $(export:calc_tw2=(font_width*n_cols+extra_width))
+    $(export:calc_th2=(font_height*n_rows+extra_height))
+
+    $(export:calc_fw=(tn_w/n_cols))
+    $(export:calc_fh=(tn_h/n_rows))
+    $(export:calc_fw2=((tn_w-cfg.window_border*2)/n_cols))
+    $(export:calc_fh2=((tn_h-cfg.window_border*2)/n_rows))
+
+    $(export:calc_cw=(tn_w/font_width))
+    $(export:calc_ch=(tn_h/font_height))
+
+    $global int offset_width, int offset_height
+    $global int extra_width, int extra_height
+
+    $list request_resize, reset_window
+
+subcode: request_resize_check
+    $local static n_state=1
+    $local static RECT rct_ss
+
+    $if n_state!=1
+	$call get_fullscreen_rect, rct_ss
+	n_state=2
+
+	tn_width = $(rctwe:ss)/4
+	tn_height =$(rcthe:ss)/6
+
+	$if tn_col > tn_width || tn_row > tn_height 
+	    return;
+	$if tn_col < 15
+	    tn_col = 15;
+	$if tn_row < 1
+	    tn_row = 1;
+
+fncode: request_resize(void * frontend, tn_col, tn_row)
+    $if IsZoomed(hwnd) && cfg.resize_action==RESIZE_TERM
+	return
+    $if cfg.resize_action == RESIZE_DISABLED 
+	return;
+    $if tn_row == n_rows && tn_col == n_cols
+	return;
+    $call request_resize_check
+
+    $call term_size, tn_row, tn_col
+
+    $if cfg.resize_action != RESIZE_FONT && !IsZoomed(hwnd)
+	# reset_window(1)
+	tn_w= extra_width + font_width * tn_col
+	tn_h= extra_height + font_height * tn_row
+	SetWindowPos(hwnd, NULL, 0, 0, tn_w, tn_h, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOZORDER);
+    $else
+	reset_window(0);
+
+    InvalidateRect(hwnd, NULL, TRUE);
+
+fncode: reset_window(n_state)
+    $local RECT rct_c, RECT rct_w
+    GetWindowRect(hwnd, &rct_w);
+    GetClientRect(hwnd, &rct_c);
+    tn_w = $(rctw:c)
+    tn_h = $(rcth:c)
+
+    $if tn_w == 0 || tn_h == 0
+	return;
+
+
+    $if cfg.resize_action == RESIZE_DISABLED
+	n_state = 2;
+
+    $if n_state>1
+	deinit_fonts();
+	init_fonts(0,0);
+
+    $if n_state==0 && (offset_width != $(calc_ow) || offset_height != $(calc_oh)) 
+	$call reset_offset_extra
+
+    $if IsZoomed(hwnd)
+	$if cfg.resize_action != RESIZE_TERM
+	    $call resize_font
+	$else
+	    $call resize_term
+	return;
+
+    $elif n_state>0
+	$call resize_window
+	return;
+    $elif n_state<0 && (cfg.resize_action == RESIZE_TERM || cfg.resize_action == RESIZE_EITHER)
+	$call resize_maximum
+	return;
+    $elif font_width != $(calc_fw2) || font_height != $(calc_fh2)
+	$call resize_font
+
+# ---- 
+subcode: init_offset_extra
+    offset_width =  cfg.window_border
+    offset_height = cfg.window_border;
+    extra_width = $(rctw:w)-$(rctw:c) + offset_width*2;
+    extra_height =$(rcth:w)-$(rcth:c) + offset_height*2;
+
+subcode: reset_offset_extra
+    offset_width  =$(calc_ow)
+    offset_height =$(calc_oh)
+    extra_width = $(rctw:w)-$(rctw:c) + offset_width*2;
+    extra_height =$(rcth:w)-$(rcth:c) + offset_height*2;
+    InvalidateRect(hwnd, NULL, TRUE);
+
+subcode: resize_font
+    $if font_width != $(calc_fw) || font_height != $(calc_fh)
+	deinit_fonts();
+	init_fonts($(calc_fw), $(calc_fh));
+	$call reset_offset_extra
+
+subcode: resize_term
+    $if n_cols !=$(calc_cw) || n_rows!=$(calc_ch)
+	$call term_size, $(calc_ch), $(calc_cw)
+	$call reset_offset_extra
+
+subcode: resize_window
+    $call init_offset_extra
+    $if tn_w != $(calc_tw) || tn_h != $(calc_th)
+	SetWindowPos(hwnd, NULL, 0, 0, $(calc_tw2), $(calc_th2), SWP_NOMOVE | SWP_NOZORDER);
+    InvalidateRect(hwnd, NULL, TRUE);
+
+subcode: resize_maximum
+    $call init_offset_extra
+
+    $if tn_w != $(calc_tw) || tn_h != $(calc_th)
+
+	$local static RECT rct_ss
+	$call get_fullscreen_rect, rct_ss
+
+	tn_col = $(rctwe:ss) / font_width;
+	tn_row = $(rcthe:ss) / font_height;
+
+	$if n_rows > tn_row || n_cols > tn_col
+	    $if cfg.resize_action == RESIZE_EITHER
+		$if n_cols > tn_col
+		    font_width = $(rctwe:ss)  / n_cols;
+		$if n_rows > tn_row
+		    font_height = $(rcthe:ss) / n_rows;
+
+		deinit_fonts();
+		init_fonts(font_width, font_height);
+		tn_col = $(rctwe:ss) / font_width;
+		tn_row = $(rcthe:ss) / font_height;
+	    $else
+		if ( tn_row > n_rows ) tn_row = n_rows;
+		if ( tn_col > n_cols ) tn_col = n_cols;
+		$call term_size, tn_row, tn_col
+	
+	SetWindowPos(hwnd, NULL, 0, 0, $(calc_tw2), $(calc_th2), SWP_NOMOVE | SWP_NOZORDER);
+	InvalidateRect(hwnd, NULL, TRUE);
+
+# ------------------------------------------------------------------------
+subcode:: function_list
+    $global n_win_x, n_win_y, n_win_w, n_win_h, b_fullscreen=0
+    $list make_full_screen, clear_full_screen
+    $list is_full_screen
+
+fncode: is_full_screen
+    return b_fullscreen
+
+fncode: make_full_screen
+    $if is_full_screen()
+	return;
+    $local RECT rct_w
+    GetWindowRect(hwnd, &rct_w)
+    n_win_x=rct_w.left
+    n_win_y=rct_w.top
+    n_win_w=rct_w.right-rct_w.left
+    n_win_h=rct_w.bottom-rct_w.top
+    printf("save win: +%d+%d-%dx%d\n", n_win_x, n_win_y, n_win_w, n_win_h)
+	
+    tn_style = GetWindowLongPtr(hwnd, GWL_STYLE);
+    tn_style &= ~(WS_CAPTION | WS_BORDER | WS_THICKFRAME);
+    $if cfg.scrollbar_in_fullscreen
+	tn_style |= WS_VSCROLL;
+    $else
+	tn_style &= ~WS_VSCROLL;
+    SetWindowLongPtr(hwnd, GWL_STYLE, tn_style);
+
+    $local RECT rct_ss
+    $call get_fullscreen_rect, rct_ss
+    SetWindowPos(hwnd, HWND_TOP, rct_ss.left, rct_ss.top, $(rctw:ss), $(rcth:ss), SWP_FRAMECHANGED);
+
+    reset_window(0);
+    b_fullscreen=1
+    $call menu_check, IDM_FULLSCREEN
+
+fncode: clear_full_screen
+    tn_style = GetWindowLongPtr(hwnd, GWL_STYLE);
+    tn_old=tn_style
+
+    tn_style |= WS_CAPTION | WS_BORDER;
+    $if cfg.resize_action == RESIZE_DISABLED
+        tn_style &= ~WS_THICKFRAME;
+    $else
+        tn_style |= WS_THICKFRAME;
+    $if cfg.scrollbar
+	tn_style |= WS_VSCROLL;
+    $else
+	tn_style &= ~WS_VSCROLL;
+    $if tn_style != tn_old
+	SetWindowLongPtr(hwnd, GWL_STYLE, tn_style);
+	printf("restore win: +%d+%d-%dx%d\n", n_win_x, n_win_y, n_win_w, n_win_h)
+	SetWindowPos(hwnd, NULL, n_win_x, n_win_y, n_win_w, n_win_h, SWP_NOZORDER | SWP_FRAMECHANGED);
+
+    b_fullscreen=0
+    $call menu_uncheck, IDM_FULLSCREEN
+
+subcode: flip_full_screen
+    $if is_full_screen()
+	clear_full_screen()
+    $else
+	make_full_screen()
+
+subcode: on_IDM_FULLSCREEN
+    $call flip_full_screen
+
+# --------------------------------------------
+subcode: on_resize_maximize
+    b_was_zoomed = 1;
+    n_prev_rows = n_rows;
+    n_prev_cols = n_cols;
+    $if cfg.resize_action == RESIZE_TERM
+	$call term_size, tn_row, tn_col
+    reset_window(0);
+subcode: on_resize_restore
+    b_was_zoomed = 0;
+    $if cfg.resize_action == RESIZE_TERM
+	$call term_size, tn_row, tn_col
+	reset_window(2);
+    $elif cfg.resize_action != RESIZE_FONT
+	reset_window(2);
+    $else
+	reset_window(0);
+subcode: on_resize
+    tn_w = LOWORD(lparam);
+    tn_h = HIWORD(lparam);
+    tn_w-=cfg.window_border*2
+    tn_h-=cfg.window_border*2
+    $call get_col_row
+    $global b_was_zoomed=0
+    $global n_prev_rows, n_prev_cols
+    $global b_need_backend_resize
+    $if wparam == SIZE_MAXIMIZED && !b_was_zoomed
+	$call on_resize_maximize
+    $elif wparam == SIZE_RESTORED && b_was_zoomed
+	$call on_resize_restore
+    $elif wparam == SIZE_MINIMIZED
+	/* do nothing */
+    $elif cfg.resize_action == RESIZE_TERM || (cfg.resize_action == RESIZE_EITHER && !is_alt_pressed())
+	$if b_resizing
+	    b_need_backend_resize = TRUE;
+	    cfg.height = tn_row
+	    cfg.width = tn_col
+	$else
+	    # when does this happen?
+	    $call term_size, tn_row, tn_col
+    $else
+	reset_window(0);
+
+# -------------------------------------------
+subcode: main_on_WM_SIZE
+    $if wparam == SIZE_RESTORED || wparam == SIZE_MAXIMIZED
+	SetWindowText(hwnd, window_name);
+    $elif wparam == SIZE_MINIMIZED
+	SetWindowText(hwnd, cfg.win_name_always ? window_name : icon_name);
+
+    $if wparam == SIZE_MINIMIZED
+	windowMinimized = TRUE;
+    $else
+	windowMinimized = FALSE;
+
+    $if cfg.resize_action == RESIZE_DISABLED
+	reset_window(-1);
+    $else
+	$call on_resize
+    sys_cursor_update();
+
+subcode: main_on_WM_ENTERSIZEMOVE
+    $global b_resizing, b_need_backend_resize
+    EnableSizeTip(1);
+    b_resizing = TRUE;
+    b_need_backend_resize = FALSE;
+
+subcode: main_on_WM_EXITSIZEMOVE
+    $global b_resizing, b_need_backend_resize
+    EnableSizeTip(0);
+    b_resizing = FALSE;
+    $if b_need_backend_resize
+	printf("resize: %d x %d\n", cfg.width, cfg.height)
+	$call term_size, cfg.height, cfg.width
+	InvalidateRect(hwnd, NULL, TRUE);
+
+subcode: main_on_WM_MOVE
+    sys_cursor_update();
+
+#---- Sizing -------------------------------------------------------
+subcode: get_col_row
+    tn_col = (tn_w + font_width / 2) / font_width;
+    $if tn_col<1
+	tn_col=1
+    tn_row = (tn_h + font_height / 2) / font_height;
+    $if tn_row<1
+	tn_row=1
+
+subcode: on_sizing_a
+    $global int need_backend_resize
+    $if !need_backend_resize && cfg.resize_action == RESIZE_EITHER && (cfg.height != n_rows || cfg.width != n_cols )
+	cfg.height=n_rows; 
+	cfg.width=n_cols;
+	InvalidateRect(hwnd, NULL, TRUE);
+	need_backend_resize = TRUE;
+
+    tn_w = tp_rct->right - tp_rct->left - extra_width
+    tn_h = tp_rct->bottom - tp_rct->top - extra_height;
+    $call get_col_row
+    UpdateSizeTip(hwnd, tn_row, tn_col);
+    $(set:ew=tn_w-tn_col*font_width)
+    $(set:eh=tn_h-tn_row*font_height)
+    $call on_sizing_adjust
+
+subcode: on_sizing_b
+    tn_ew = extra_width + (cfg.window_border - offset_width) * 2;
+    tn_eh = extra_height + (cfg.window_border - offset_height) * 2;
+
+    tn_w = tp_rct->right - tp_rct->left - tn_ew;
+    tn_h = tp_rct->bottom - tp_rct->top - tn_eh;
+
+    tn_fw = (tn_w + n_cols/2)/n_cols;
+    tn_fh = (tn_h + n_rows/2)/n_rows;
+
+    $(set:ew=tn_w-tn_fw*n_cols)
+    $(set:eh=tn_h-tn_fh*n_rows)
+    $call on_sizing_adjust
+
+subcode: on_sizing_adjust
+    $(set:OnLeft=wparam==WMSZ_LEFT||wparam==WMSZ_BOTTOMLEFT||wparam == WMSZ_TOPLEFT)
+    $(set:OnTop=wparam==WMSZ_TOP||wparam==WMSZ_TOPRIGHT||wparam == WMSZ_TOPLEFT)
+    $if $(OnLeft)
+	tp_rct->left += $(ew)
+    $else
+	tp_rct->right -= $(ew)
+    $if $(OnTop)
+	tp_rct->top += $(eh)
+    $else
+	tp_rct->bottom -= $(eh);
+    $if $(ew) || $(eh)
+	return 1
+    $else
+	return 0
+
+subcode: main_on_WM_SIZING
+    $local LPRECT tp_rct 
+    tp_rct= (LPRECT) lparam
+    $if cfg.resize_action == RESIZE_TERM || (cfg.resize_action == RESIZE_EITHER && !is_alt_pressed())
+	$call on_sizing_a
+    $else
+	$call on_sizing_b
+
+# ----- MulitiMonitor Support -------------------------------------------------------
+subcode:: function_list
+    $list pt_on_topleft
+
+subcode: get_fullscreen_rect(rct_ss)
+    $local HMONITOR h_monitor;
+    $local MONITORINFO info_monitor;
+    h_monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    info_monitor.cbSize = sizeof(info_monitor);
+    GetMonitorInfo(h_monitor, &info_monitor);
+    $(rct_ss) = info_monitor.rcMonitor;
+
+fncode: pt_on_topleft(POINT pt)
+    $local HMONITOR h_monitor;
+    $local MONITORINFO info_monitor;
+    h_monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONULL);
+    $if h_monitor != NULL
+	info_monitor.cbSize = sizeof(MONITORINFO);
+	GetMonitorInfo(h_monitor, &info_monitor);
+	$if info_monitor.rcMonitor.left == pt.x && info_monitor.rcMonitor.top == pt.y
+	    return 1
+    return 0
+

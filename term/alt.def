@@ -1,0 +1,106 @@
+subcode:: on_term_init
+    $map term_decl, tree234 *alt_screen, int alt_sblines, int alt_which
+    $map term_decl, pos alt_curs, pos alt_save_curs
+    $map decl_alt, marg_t, marg_b, dec_om, wrap, wrapnext, insert, cset, utf, sco_acs
+    $map decl_alt_save, attr, cset, csattr, utf, wnext, sco_acs
+    $.alt_screen = NULL
+    $.alt_sblines = 0;
+
+subcode:: on_term_finish
+    &call tree234_clear, $.alt_screen
+	$call freeline, p_line
+
+# ---- power_on 
+subcode:: on_term_power_on
+    $.alt_which = 0;
+    $map copy_alt, curs, save_curs
+    $.alt_curs.y=0
+    $map copy_alt, marg_t, marg_b, dec_om, wrap, wrapnext, insert, cset, utf, sco_acs
+    $map copy_alt_save, attr, cset, csattr, utf, wnext, sco_acs
+
+    $if $.alt_screen
+	$call clear_alt_screen
+
+subcode: clear_alt_screen
+    $for i=0:$.rows
+	p_line=index234($.alt_screen, i)
+	$call blank_line
+
+# ----
+subcode: copy_alt(name)
+    $(this)alt_$(name)=$(this)$(name)
+
+subcode: copy_alt_save(name)
+    $(this)alt_save_$(name)=$(this)save_$(name)
+
+subcode: decl_alt(name)
+    $call term_decl, int alt_$(name)
+
+subcode: decl_alt_save(name)
+    $call term_decl, int alt_save_$(name)
+
+# ---- term_size --------------------------------
+subcode:: on_term_size_before
+    tn_save_alt_which = $.alt_which;
+    swap_screen(term, 0, FALSE, FALSE);
+
+subcode:: on_term_size_after
+    $call term_size_new_alt_screen
+    $call term_size_set_alt_variables
+    swap_screen(term, tn_save_alt_which, FALSE, FALSE);
+
+# --
+subcode: term_size_new_alt_screen
+    $local tree234 * p_newalt
+    p_newalt = newtree234(NULL);
+    $for i=0:n_row
+	p_line = newline(term, n_col, TRUE);
+	addpos234(p_newalt, p_line, i);
+    $if $.alt_screen
+	p_line=delpos234($.alt_screen, 0)
+	$while p_line
+	    $call freeline, p_line
+	    p_line=delpos234($.alt_screen, 0)
+	freetree234($.alt_screen);
+    $.alt_screen = p_newalt;
+    $.alt_sblines = 0;
+
+subcode: term_size_set_alt_variables
+    $.alt_curs.y += tn_cursor_adjust
+    $.alt_save_curs.y += tn_cursor_adjust
+    $map fit_pos_range, alt_save_curs, alt_curs
+    $.alt_marg_t = $.marg_t
+    $.alt_marg_b = $.marg_b
+    $.alt_wrapnext =$.wrapnext
+
+# ============================================================
+subcode: swap(a, b, t)
+    $(t)=$(a)
+    $(a)=$(b)
+    $(b)=$(t)
+
+subcode: swap_screen_var(tempvar, name)
+    $if $(condition)
+	$call swap, $.$(name), $.alt_$(name), $(tempvar)
+    $else
+	$.alt_$(name)=$.$(name)
+
+fncode: swap_screen(Terminal *term, int which, int reset, int keep_cur_pos)
+    $if which != 0
+	reset = FALSE
+
+    $if which != $.alt_which
+	$.alt_which = which;
+
+	$local tree234 *tp_tree234
+	$call swap, $.screen, $.alt_screen, tp_tree234
+
+	$.alt_sblines = find_last_nonempty_line(term, $.alt_screen) + 1;
+
+	$local pos pos_temp
+	$(set:condition=!reset && !keep_cur_pos)
+	$map swap_screen_var(pos_temp), curs, savecurs
+	$map swap_screen_var(tn_temp), save_attr, save_cset, save_csattr, save_utf, save_wnext, save_sco_acs
+	$(set:condition=!reset)
+	$map swap_screen_var(tn_temp), marg_t, marg_b, dec_om, wrap, wrapnext, insert, cset, utf, sco_acs
+

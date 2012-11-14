@@ -1,0 +1,103 @@
+
+subcode:: function_list
+    $list get_userpass_input
+
+fncode: get_userpass_input(prompts_t *p_prompts, unsigned char *ts_in, tn_inlen)
+    tn_ret = cmdline_get_passwd_input(p_prompts, ts_in, tn_inlen)
+    $if tn_ret==-1
+	$call term_get_userpass_input
+    return tn_ret;
+
+# ---------------------------------------------------------
+subcode: term_get_userpass_input
+    $struct(term_userpass_state) n_pos_prompt, tb_done_prompt, n_pos_cursor
+    $call getpass_init
+    $while tp_state->n_pos_prompt < (int)p_prompts->n_prompts
+	$local prompt_t * tp_prompt
+	tp_prompt = p_prompts->prompts[tp_state->n_pos_prompt];
+	$if !tp_state->tb_done_prompt
+	    $call get_prompt_prompt, tp_prompt
+	$if !ts_in || !tn_inlen
+	    break
+	$else
+	    $call get_prompt_input, tp_prompt
+
+    $if tp_state->n_pos_prompt < (int)p_prompts->n_prompts
+	return -1
+    $else
+	$call getpass_done
+
+subcode: getpass_init
+    $(set:p=p_prompts->)
+    $local struct term_userpass_state * tp_state
+    tp_state=(struct term_userpass_state *)$(p)data
+    $if !tp_state
+	tp_state = snew(struct term_userpass_state);
+	tp_state->n_pos_prompt = 0;
+	tp_state->tb_done_prompt = 0;
+	$(p)data = tp_state
+	$if $(p)name_reqd && $(p)name
+	    tn_len = strlen($(p)name);
+	    term_data_untrusted(term, $(p)name, tn_len);
+	    $if $(p)name[tn_len-1] != '\n'
+		term_data_untrusted(term, "\n", 1);
+	$if $(p)instruction
+	    tn_len = strlen($(p)instruction);
+	    term_data_untrusted(term, $(p)instruction, tn_len);
+	    $if $(p)instruction[tn_len-1] != '\n'
+		term_data_untrusted(term, "\n", 1);
+	$for i=0:(int)$(p)n_prompts
+	    memset($(p)prompts[i]->result, 0, $(p)prompts[i]->result_len);
+
+subcode: getpass_done
+    sfree(tp_state)
+    p_prompts->data = NULL;
+    return 1
+
+subcode: getpass_abort
+    term_data(term, "\r\n", 2);
+    sfree(tp_state);
+    p_prompts->data = NULL;
+    return 0
+
+# ----------------------------------------
+subcode: get_prompt_prompt(p)
+    term_data_untrusted(term, $(p)->prompt, strlen($(p)->prompt));
+    tp_state->tb_done_prompt = 1;
+    tp_state->n_pos_cursor = 0;
+
+subcode: get_prompt_input(p)
+    $while tn_inlen
+	char c = *ts_in++;
+	tn_inlen--;
+	$if c==10 || c==13
+	    term_data(term, "\r\n", 2);
+	    $(p)->result[tp_state->n_pos_cursor] = '\0';
+	    $(p)->result[$(p)->result_len - 1] = '\0';
+	    tp_state->n_pos_prompt++;
+	    tp_state->tb_done_prompt = 0;
+	    break
+	$elif c==8 || c==127
+	    # Backspace
+	    $if tp_state->n_pos_cursor > 0
+		$call get_prompt_del_char
+	$elif c==21 || c==27
+	    # NAK, ESC
+	    $while tp_state->n_pos_cursor > 0
+		$call get_prompt_del_char
+	$elif c==3 || c==4
+	    $call getpass_abort
+	$else
+	    $if (!$(p)->echo || (c >= ' ' && c <= '~') || ((unsigned char) c >= 160))
+		$call get_prompt_add_char, c
+
+subcode: get_prompt_add_char(c)
+    $if tp_state->n_pos_cursor < (int)$(p)->result_len - 1
+	$(p)->result[tp_state->n_pos_cursor++] = $(c)
+	$if $(p)->echo
+	    term_data(term, &$(c), 1)
+
+subcode: get_prompt_del_char
+    $if $(p)->echo
+	term_data(term, "\b \b", 3);
+    tp_state->n_pos_cursor--;

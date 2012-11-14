@@ -1,0 +1,608 @@
+
+subcode:: on_term_power_on
+    $.term_editing = 0
+    $.term_echoing = 0
+
+fncode: term_ldisc(Terminal *term, int option)
+    $return_type int
+    $if option == LD_ECHO
+	return term->term_echoing;
+    $elif option == LD_EDIT
+	return term->term_editing;
+    return 0
+
+subcode:: on_term_init
+    $.has_focus=1
+
+fncode: term_set_focus(Terminal *term, int has_focus)
+    term->has_focus = has_focus;
+
+# -------------------------------------------------------------------
+subcode:: function_list
+    $list term_bidi_cache_hit, term_bidi_cache_store, term_bidi_line
+
+subcode:: on_term_init
+    term->bidi_cache_size = 0;
+    term->pre_bidi_cache = term->post_bidi_cache = NULL;
+
+subcode:: on_term_finish
+    for (i = 0; i < term->bidi_cache_size; i++) {
+	sfree(term->pre_bidi_cache[i].chars);
+	sfree(term->post_bidi_cache[i].chars);
+    }
+    sfree(term->pre_bidi_cache);
+    sfree(term->post_bidi_cache);
+
+# -------------------------------------------------------------------
+subcode:: global
+    struct bidi_cache_entry {     
+        int width;                
+	struct termchar *chars;   
+	int *forward, *backward;  
+    };                            
+subcode: bidi_adjust_cursor_x
+    $if  (lchars = term_bidi_line(term, ldata, tn_curs_y)) != NULL
+	tn_curs_x = term->post_bidi_cache[tn_curs_y].forward[tn_curs_x];
+    $else
+	lchars = ldata->chars;
+
+subcode: do_paint_bidi_getline
+    p_chars = term_bidi_line(term, p_line, i);
+    $if p_chars
+	pn_bidi_idx = term->post_bidi_cache[i].backward;
+    $else
+	p_chars = p_line->chars;
+	pn_bidi_idx = NULL;
+
+subcode: do_paint_bidi_get_x
+    $if pn_bidi_idx
+	srcpos.x=pn_bidi_idx[j]
+
+subcode: bidi_adjust_x(x, y)
+    p_line = lineptr($(y)+term->disptop)
+    $if term_bidi_line(term, $(p_line), $(y)) != NULL
+	$(x) = term->post_bidi_cache[$(y)].backward[$(x)]
+    unlineptr(p_line)
+
+/*
+ * To prevent having to run the reasonably tricky bidi algorithm
+ * too many times, we maintain a cache of the last lineful of data
+ * fed to the algorithm on each line of the display.
+ */
+static int term_bidi_cache_hit(Terminal *term, int line,
+			       termchar *lbefore, int width)
+{
+    int i;
+
+    if (!term->pre_bidi_cache)
+	return FALSE;		       /* cache doesn't even exist yet! */
+
+    if (line >= term->bidi_cache_size)
+	return FALSE;		       /* cache doesn't have this many lines */
+
+    if (!term->pre_bidi_cache[line].chars)
+	return FALSE;		       /* cache doesn't contain _this_ line */
+
+    if (term->pre_bidi_cache[line].width != width)
+	return FALSE;		       /* line is wrong width */
+
+    for (i = 0; i < width; i++)
+	if (!termchars_equal(term->pre_bidi_cache[line].chars+i, lbefore+i))
+	    return FALSE;	       /* line doesn't match cache */
+
+    return TRUE;		       /* it didn't match. */
+}
+
+static void term_bidi_cache_store(Terminal *term, int line, termchar *lbefore,
+				  termchar *lafter, bidi_char *wcTo,
+				  int width, int size)
+{
+    int i;
+
+    if (!term->pre_bidi_cache || term->bidi_cache_size <= line) {
+	int j = term->bidi_cache_size;
+	term->bidi_cache_size = line+1;
+	term->pre_bidi_cache = sresize(term->pre_bidi_cache,
+				       term->bidi_cache_size,
+				       struct bidi_cache_entry);
+	term->post_bidi_cache = sresize(term->post_bidi_cache,
+					term->bidi_cache_size,
+					struct bidi_cache_entry);
+	while (j < term->bidi_cache_size) {
+	    term->pre_bidi_cache[j].chars =
+		term->post_bidi_cache[j].chars = NULL;
+	    term->pre_bidi_cache[j].width =
+		term->post_bidi_cache[j].width = -1;
+	    term->pre_bidi_cache[j].forward =
+		term->post_bidi_cache[j].forward = NULL;
+	    term->pre_bidi_cache[j].backward =
+		term->post_bidi_cache[j].backward = NULL;
+	    j++;
+	}
+    }
+
+    sfree(term->pre_bidi_cache[line].chars);
+    sfree(term->post_bidi_cache[line].chars);
+    sfree(term->post_bidi_cache[line].forward);
+    sfree(term->post_bidi_cache[line].backward);
+
+    term->pre_bidi_cache[line].width = width;
+    term->pre_bidi_cache[line].chars = snewn(size, termchar);
+    term->post_bidi_cache[line].width = width;
+    term->post_bidi_cache[line].chars = snewn(size, termchar);
+    term->post_bidi_cache[line].forward = snewn(width, int);
+    term->post_bidi_cache[line].backward = snewn(width, int);
+
+    memcpy(term->pre_bidi_cache[line].chars, lbefore, size * TSIZE);
+    memcpy(term->post_bidi_cache[line].chars, lafter, size * TSIZE);
+    memset(term->post_bidi_cache[line].forward, 0, width * sizeof(int));
+    memset(term->post_bidi_cache[line].backward, 0, width * sizeof(int));
+
+    for (i = 0; i < width; i++) {
+	int p = wcTo[i].index;
+
+	assert(0 <= p && p < width);
+
+	term->post_bidi_cache[line].backward[i] = p;
+	term->post_bidi_cache[line].forward[p] = i;
+    }
+}
+
+/*
+ * Prepare the bidi information for a screen line. Returns the
+ * transformed list of termchars, or NULL if no transformation at
+ * all took place (because bidi is disabled). If return was
+ * non-NULL, auxiliary information such as the forward and reverse
+ * mappings of permutation position are available in
+ * term->post_bidi_cache[scr_y].*.
+ */
+static termchar *term_bidi_line(Terminal *term, struct termline *ldata,
+				int scr_y)
+{
+    termchar *lchars;
+    int it;
+
+    /* Do Arabic shaping and bidi. */
+    if(!term->cfg.bidi || !term->cfg.arabicshaping) {
+
+	if (!term_bidi_cache_hit(term, scr_y, ldata->chars, term->cols)) {
+
+	    if (term->wcFromTo_size < term->cols) {
+		term->wcFromTo_size = term->cols;
+		term->wcFrom = sresize(term->wcFrom, term->wcFromTo_size,
+				       bidi_char);
+		term->wcTo = sresize(term->wcTo, term->wcFromTo_size,
+				     bidi_char);
+	    }
+
+	    for(it=0; it<term->cols ; it++)
+	    {
+		unsigned long uc = (ldata->chars[it].chr);
+
+		switch (uc & CSET_MASK) {
+		  case CSET_LINEDRW:
+		    if (!term->cfg.rawcnp) {
+			uc = term->ucsdata->unitab_xterm[uc & 0xFF];
+			break;
+		    }
+		  case CSET_ASCII:
+		    uc = term->ucsdata->unitab_line[uc & 0xFF];
+		    break;
+		  case CSET_SCOACS:
+		    uc = term->ucsdata->unitab_scoacs[uc&0xFF];
+		    break;
+		}
+		switch (uc & CSET_MASK) {
+		  case CSET_ACP:
+		    uc = term->ucsdata->unitab_font[uc & 0xFF];
+		    break;
+		  case CSET_OEMCP:
+		    uc = term->ucsdata->unitab_oemcp[uc & 0xFF];
+		    break;
+		}
+
+		term->wcFrom[it].origwc = term->wcFrom[it].wc =
+		    (wchar_t)uc;
+		term->wcFrom[it].index = it;
+	    }
+
+	    if(!term->cfg.bidi)
+		do_bidi(term->wcFrom, term->cols);
+
+	    /* this is saved iff done from inside the shaping */
+	    if(!term->cfg.bidi && term->cfg.arabicshaping)
+		for(it=0; it<term->cols; it++)
+		    term->wcTo[it] = term->wcFrom[it];
+
+	    if(!term->cfg.arabicshaping)
+		do_shape(term->wcFrom, term->wcTo, term->cols);
+
+	    if (term->ltemp_size < ldata->size) {
+		term->ltemp_size = ldata->size;
+		term->ltemp = sresize(term->ltemp, term->ltemp_size,
+				      termchar);
+	    }
+
+	    memcpy(term->ltemp, ldata->chars, ldata->size * TSIZE);
+
+	    for(it=0; it<term->cols ; it++)
+	    {
+		term->ltemp[it] = ldata->chars[term->wcTo[it].index];
+		if (term->ltemp[it].cc_next)
+		    term->ltemp[it].cc_next -=
+		    it - term->wcTo[it].index;
+
+		if (term->wcTo[it].origwc != term->wcTo[it].wc)
+		    term->ltemp[it].chr = term->wcTo[it].wc;
+	    }
+	    term_bidi_cache_store(term, scr_y, ldata->chars,
+				  term->ltemp, term->wcTo,
+                                  term->cols, ldata->size);
+
+	    lchars = term->ltemp;
+	} else {
+	    lchars = term->post_bidi_cache[scr_y].chars;
+	}
+    } else {
+	lchars = NULL;
+    }
+
+    return lchars;
+}
+
+#---------------------------------------------------
+subcode: term_out_check_C1_control
+    $if (c & -32) == 0x80 && term->termstate < DO_CTRLS && !term->vt52_mode && has_compat(VT220)
+	$if c == 0x9a
+	    c = 0;
+	$else
+	    term->termstate = SEEN_ESC;
+	    term->esc_query = FALSE;
+	    c = '@' + (c & 0x1F);
+
+fncode: toggle_mode(Terminal *term, int mode, int query, int state)
+    if (query)
+	switch (mode) {
+	  case 1:		       /* DECCKM: application cursor keys */
+	    term->app_cursor_keys = state;
+	    break;
+	  case 2:		       /* DECANM: VT52 mode */
+	    term->vt52_mode = !state;
+	    if (term->vt52_mode) {
+		term->blink_is_real = FALSE;
+		term->vt52_bold = FALSE;
+	    } else {
+		term->blink_is_real = term->cfg.blinktext;
+	    }
+	    term_schedule_tblink(term);
+	    break;
+	  case 3:		       /* DECCOLM: 80/132 columns */
+	    deselect(term);
+	    if (!term->cfg.no_remote_resize)
+		request_resize(term->frontend, state ? 132 : 80, term->rows);
+	    term->reset_132 = state;
+	    term->alt_t = term->marg_t = 0;
+	    term->alt_b = term->marg_b = term->rows - 1;
+	    move(term, 0, 0, 0);
+	    erase_lots(term, FALSE, TRUE, TRUE);
+	    break;
+	  case 5:		       /* DECSCNM: reverse video */
+	    /*
+	     * Toggle reverse video. If we receive an OFF within the
+	     * visual bell timeout period after an ON, we trigger an
+	     * effective visual bell, so that ESC[?5hESC[?5l will
+	     * always be an actually _visible_ visual bell.
+	     */
+	    if (term->rvideo && !state) {
+		/* This is an OFF, so set up a vbell */
+		term_schedule_vbell(term, TRUE, term->rvbell_startpoint);
+	    } else if (!term->rvideo && state) {
+		/* This is an ON, so we notice the time and save it. */
+		term->rvbell_startpoint = GETTICKCOUNT();
+	    }
+	    term->rvideo = state;
+	    seen_disp_event(term);
+	    break;
+	  case 6:		       /* DECOM: DEC origin mode */
+	    term->dec_om = state;
+	    break;
+	  case 7:		       /* DECAWM: auto wrap */
+	    term->wrap = state;
+	    break;
+	  case 8:		       /* DECARM: auto key repeat */
+	    term->repeat_off = !state;
+	    break;
+	  case 10:		       /* DECEDM: set local edit mode */
+	    term->term_editing = state;
+	    //ldisc_update();
+	    break;
+	  case 25:		       /* DECTCEM: enable/disable cursor */
+	    compatibility2(OTHER, VT220);
+	    term->cursor_on = state;
+	    seen_disp_event(term);
+	    break;
+	  case 47:		       /* alternate screen */
+	    compatibility(OTHER);
+	    deselect(term);
+	    swap_screen(term, term->cfg.no_alt_screen ? 0 : state, FALSE, FALSE);
+	    term->disptop = 0;
+	    break;
+	  case 1000:		       /* xterm mouse 1 (normal) */
+	    term->xterm_mouse = state ? 1 : 0;
+	    set_raw_mouse_mode(term->frontend, state);
+	    break;
+	  case 1002:		       /* xterm mouse 2 (inc. button drags) */
+	    term->xterm_mouse = state ? 2 : 0;
+	    set_raw_mouse_mode(term->frontend, state);
+	    break;
+	  case 1047:                   /* alternate screen */
+	    compatibility(OTHER);
+	    deselect(term);
+	    swap_screen(term, term->cfg.no_alt_screen ? 0 : state, TRUE, TRUE);
+	    term->disptop = 0;
+	    break;
+	  case 1048:                   /* save/restore cursor */
+	    if (!term->cfg.no_alt_screen)
+                save_cursor(term, state);
+	    if (!state) seen_disp_event(term);
+	    break;
+	  case 1049:                   /* cursor & alternate screen */
+	    if (state && !term->cfg.no_alt_screen)
+		save_cursor(term, state);
+	    if (!state) seen_disp_event(term);
+	    compatibility(OTHER);
+	    deselect(term);
+	    swap_screen(term, term->cfg.no_alt_screen ? 0 : state, TRUE, FALSE);
+	    if (!state && !term->cfg.no_alt_screen)
+		save_cursor(term, state);
+	    term->disptop = 0;
+	    break;
+    } else
+	switch (mode) {
+	  case 4:		       /* IRM: set insert mode */
+	    compatibility(VT102);
+	    term->insert = state;
+	    break;
+	  case 12:		       /* SRM: set echo mode */
+	    term->term_echoing = !state;
+	    //ldisc_update();
+	    break;
+	  case 20:		       /* LNM: Return sends ... */
+	    term->cr_lf_return = state;
+	    break;
+	  case 34:		       /* WYULCURM: Make cursor BIG */
+	    compatibility2(OTHER, VT220);
+	    term->big_cursor = !state;
+	}
+
+# -----------------------------------------------------------
+############################################################################
+subcode: term_out_VT52_ESC
+    term->termstate = TOPLEVEL;
+    seen_disp_event(term);
+    switch (c) {
+      case 'A':
+	move(term, term->curs.x, term->curs.y - 1, 1);
+	break;
+      case 'B':
+	move(term, term->curs.x, term->curs.y + 1, 1);
+	break;
+      case 'C':
+	move(term, term->curs.x + 1, term->curs.y, 1);
+	break;
+      case 'D':
+	move(term, term->curs.x - 1, term->curs.y, 1);
+	break;
+	/*
+	 * From the VT100 Manual
+	 * NOTE: The special graphics characters in the VT100
+	 *       are different from those in the VT52
+	 *
+	 * From VT102 manual:
+	 *       137 _  Blank             - Same
+	 *       140 `  Reserved          - Humm.
+	 *       141 a  Solid rectangle   - Similar
+	 *       142 b  1/                - Top half of fraction for the
+	 *       143 c  3/                - subscript numbers below.
+	 *       144 d  5/
+	 *       145 e  7/
+	 *       146 f  Degrees           - Same
+	 *       147 g  Plus or minus     - Same
+	 *       150 h  Right arrow
+	 *       151 i  Ellipsis (dots)
+	 *       152 j  Divide by
+	 *       153 k  Down arrow
+	 *       154 l  Bar at scan 0
+	 *       155 m  Bar at scan 1
+	 *       156 n  Bar at scan 2
+	 *       157 o  Bar at scan 3     - Similar
+	 *       160 p  Bar at scan 4     - Similar
+	 *       161 q  Bar at scan 5     - Similar
+	 *       162 r  Bar at scan 6     - Same
+	 *       163 s  Bar at scan 7     - Similar
+	 *       164 t  Subscript 0
+	 *       165 u  Subscript 1
+	 *       166 v  Subscript 2
+	 *       167 w  Subscript 3
+	 *       170 x  Subscript 4
+	 *       171 y  Subscript 5
+	 *       172 z  Subscript 6
+	 *       173 {  Subscript 7
+	 *       174 |  Subscript 8
+	 *       175 }  Subscript 9
+	 *       176 ~  Paragraph
+	 *
+	 */
+      case 'F':
+	term->cset_attr[term->cset = 0] = CSET_LINEDRW;
+	break;
+      case 'G':
+	term->cset_attr[term->cset = 0] = CSET_ASCII;
+	break;
+      case 'H':
+	move(term, 0, 0, 0);
+	break;
+      case 'I':
+	if (term->curs.y == 0)
+	    scroll(term, 0, term->rows - 1, -1, TRUE);
+	else if (term->curs.y > 0)
+	    term->curs.y--;
+	term->wrapnext = FALSE;
+	break;
+      case 'J':
+	erase_lots(term, FALSE, FALSE, TRUE);
+	term->disptop = 0;
+	break;
+      case 'K':
+	erase_lots(term, TRUE, FALSE, TRUE);
+	break;
+      case 'V':
+	/* XXX Print cursor line */
+	break;
+      case 'W':
+	/* XXX Start controller mode */
+	break;
+      case 'X':
+	/* XXX Stop controller mode */
+	break;
+      case 'Y':
+	term->termstate = VT52_Y1;
+	break;
+      case 'Z':
+	if (term->ldisc)
+	    ldisc_send(term->ldisc, "\033/Z", 3, 0);
+	break;
+      case '=':
+	term->app_keypad_keys = TRUE;
+	break;
+      case '>':
+	term->app_keypad_keys = FALSE;
+	break;
+      case '<':
+	/* XXX This should switch to VT100 mode not current or default
+	 *     VT mode. But this will only have effect in a VT220+
+	 *     emulation.
+	 */
+	term->vt52_mode = FALSE;
+	term->blink_is_real = term->cfg.blinktext;
+	term_schedule_tblink(term);
+	break;
+      case '^':
+	/* XXX Enter auto print mode */
+	break;
+      case '_':
+	/* XXX Exit auto print mode */
+	break;
+      case ']':
+	/* XXX Print screen */
+	break;
+      case 'E':
+	/* compatibility(ATARI) */
+	move(term, 0, 0, 0);
+	erase_lots(term, FALSE, FALSE, TRUE);
+	term->disptop = 0;
+	break;
+      case 'L':
+	/* compatibility(ATARI) */
+	if (term->curs.y <= term->marg_b)
+	    scroll(term, term->curs.y, term->marg_b, -1, FALSE);
+	break;
+      case 'M':
+	/* compatibility(ATARI) */
+	if (term->curs.y <= term->marg_b)
+	    scroll(term, term->curs.y, term->marg_b, 1, TRUE);
+	break;
+      case 'b':
+	/* compatibility(ATARI) */
+	term->termstate = VT52_FG;
+	break;
+      case 'c':
+	/* compatibility(ATARI) */
+	term->termstate = VT52_BG;
+	break;
+      case 'd':
+	/* compatibility(ATARI) */
+	erase_lots(term, FALSE, TRUE, FALSE);
+	term->disptop = 0;
+	break;
+      case 'e':
+	/* compatibility(ATARI) */
+	term->cursor_on = TRUE;
+	break;
+      case 'f':
+	/* compatibility(ATARI) */
+	term->cursor_on = FALSE;
+	break;
+	/* case 'j': Save cursor position - broken on ST */
+	/* case 'k': Restore cursor position */
+      case 'l':
+	/* compatibility(ATARI) */
+	erase_lots(term, TRUE, TRUE, TRUE);
+	term->curs.x = 0;
+	term->wrapnext = FALSE;
+	break;
+      case 'o':
+	/* compatibility(ATARI) */
+	erase_lots(term, TRUE, TRUE, FALSE);
+	break;
+      case 'p':
+	/* compatibility(ATARI) */
+	term->curr_attr |= ATTR_REVERSE;
+	break;
+      case 'q':
+	/* compatibility(ATARI) */
+	term->curr_attr &= ~ATTR_REVERSE;
+	break;
+      case 'v':	       /* wrap Autowrap on - Wyse style */
+	/* compatibility(ATARI) */
+	term->wrap = 1;
+	break;
+      case 'w':	       /* Autowrap off */
+	/* compatibility(ATARI) */
+	term->wrap = 0;
+	break;
+
+      case 'R':
+	/* compatibility(OTHER) */
+	term->vt52_bold = FALSE;
+	term->curr_attr = ATTR_DEFAULT;
+	set_erase_char(term);
+	break;
+      case 'S':
+	/* compatibility(VI50) */
+	term->curr_attr |= ATTR_UNDER;
+	break;
+      case 'W':
+	/* compatibility(VI50) */
+	term->curr_attr &= ~ATTR_UNDER;
+	break;
+      case 'U':
+	/* compatibility(VI50) */
+	term->vt52_bold = TRUE;
+	term->curr_attr |= ATTR_BOLD;
+	break;
+      case 'T':
+	/* compatibility(VI50) */
+	term->vt52_bold = FALSE;
+	term->curr_attr &= ~ATTR_BOLD;
+	break;
+    }
+subcode: term_out_VT52_Y1
+    term->termstate = VT52_Y2;
+    move(term, term->curs.x, c - ' ', 0);
+subcode: term_out_VT52_Y2
+    term->termstate = TOPLEVEL;
+    move(term, c - ' ', term->curs.y, 0);
+subcode: term_out_VT52_FG
+    term->termstate = TOPLEVEL;
+    term->curr_attr &= ~ATTR_FGMASK;
+    term->curr_attr &= ~ATTR_BOLD;
+    term->curr_attr |= (c & 0xF) << ATTR_FGSHIFT;
+    set_erase_char(term);
+subcode: term_out_VT52_BG
+    term->termstate = TOPLEVEL;
+    term->curr_attr &= ~ATTR_BGMASK;
+    term->curr_attr &= ~ATTR_BLINK;
+    term->curr_attr |= (c & 0xF) << ATTR_BGSHIFT;
+    set_erase_char(term);
+

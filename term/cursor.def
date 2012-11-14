@@ -1,0 +1,98 @@
+subcode:: on_term_init
+    $map term_decl, pos curs, int cset_attr[2] 
+    $map decl_int, default_attr
+    $map decl_int, marg_t, marg_b
+    $map decl_int, curr_attr, wrapnext, cset, utf, sco_acs
+    $map decl_save, curr_attr, wrapnext, cset, utf, sco_acs
+    $map term_decl, pos save_curs, int save_csattr
+
+subcode:: function_list
+    $list move_cursor
+
+subcode:: on_term_power_on
+    $.curs.x = 0
+    $.curs.y = 0
+    $.default_attr = ATTR_DEFAULT
+    $.curr_attr = ATTR_DEFAULT
+    $.cset = 0
+    $.utf = 0
+    $.wrapnext = 0
+    $.cset_attr[0] = CSET_ASCII
+    $.cset_attr[1] = CSET_ASCII
+    $.sco_acs = 0
+    $call save_cursor
+
+    $.marg_t=0
+    $if $.rows>0
+	$.marg_b=$.rows-1
+    $else
+	$.marg_b=0
+
+    $if $.screen
+	$if tb_clear
+	    $call erase_screen_2
+	$.curs.y = find_last_nonempty_line(term, $.screen) + 1;
+	$if $.curs.y == $.rows
+	    $.curs.y--;
+	    scroll(term, 0, $.rows - 1, 1, TRUE);
+
+subcode:: on_term_size_after
+    $.marg_t = 0;
+    $.marg_b = n_row - 1;
+    $.wrapnext = 0
+    $.curs.y += tn_cursor_adjust
+    $.save_curs.y += tn_cursor_adjust
+    $map fit_pos_range, $.save_curs, $.curs
+
+subcode: save_cursor
+    $map cur_save, curs, curr_attr, wrapnext, cset, utf, sco_acs
+    $.save_csattr = $.cset_attr[$.cset];
+
+subcode: restore_cursor
+    $map cur_restore, curs, curr_attr, wrapnext, cset, utf, sco_acs
+    $.cset_attr[$.cset] = $.save_csattr;
+    $call fit_pos_range, $.curs
+    $if $.wrapnext && $.curs.x < $.cols-1
+	$.wrapnext = 0
+    $call @on_term_curr_attr
+
+# ----
+subcode: cur_save(name)
+    $(this)save_$(name)=$(this)$(name)
+subcode: cur_restore(name)
+    $(this)$(name)=$(this)save_$(name)
+subcode: decl_int(name)
+    $call term_decl, int $(name)
+subcode: decl_save(name)
+    $call term_decl, int save_$(name)
+
+# ---------------------------------------- 
+subcode: fit_margin(y, n_marg_clip)
+    $if $(n_marg_clip)==2
+	$call fit_range, $(y), $.marg_t, $.marg_b
+    $elif $(n_marg_clip)
+	$if ($.curs.y >= $.marg_t) && $(y) < $.marg_t
+	    $(y) = $.marg_t;
+	$if ($.curs.y <= $.marg_b) && $(y) > $.marg_b
+	    $(y) = $.marg_b;
+
+# ---------------------------------------- 
+subcode: fit_range(var, a, b)
+    $if $(var)<$(a)
+	$(var)=$(a)
+    $elif $(var)>$(b)
+	$(var)=$(b)
+
+subcode: fit_pos_range(var)
+    $call fit_range, $(var).x, 0, $.cols-1
+    $call fit_range, $(var).y, 0, $.rows-1
+
+# ------------------------------------------------
+fncode: move_cursor(Terminal *term, int x, int y, n_marg_clip)
+    $call fit_range, x, 0, $.cols-1
+    $call fit_margin, y, n_marg_clip
+    $call fit_range, y, 0, $.rows-1
+    $.curs.x = x
+    $.curs.y = y
+    $.wrapnext = 0
+

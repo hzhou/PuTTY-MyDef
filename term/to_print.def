@@ -1,0 +1,60 @@
+# ###### ANSI printing ##############################################
+subcode:: on_term_init
+    $map term_decl, bufchain printer_buf, printer_job *p_print_job
+    bufchain_init(&$.printer_buf);
+    $.p_print_job = NULL;
+
+subcode:: on_term_power_on
+    $if $.p_print_job
+	printer_finish_job($.p_print_job);
+    bufchain_clear(&$.printer_buf)
+
+subcode:: on_term_finish
+    $if $.p_print_job
+	printer_finish_job($.p_print_job);
+    bufchain_clear(&$.printer_buf)
+
+subcode: term_do_MC
+    $if $.n_esc_args==1
+	$if $.pn_esc_args[0]==5 && cfg.printer
+	    $call term_print_start
+
+subcode: term_out_printing
+    $if c == '\033'
+	$.n_state_2 = 1
+    $elif c == '[' && $.n_state_2 == 1
+	$.n_state_2 = 2
+    $elif c == '4' && $.n_state_2 == 2
+	$.n_state_2 = 3
+    $elif c == 'i' && $.n_state_2 == 3
+	$call term_print_finish
+    $else
+	$if $.n_state_2>0
+	    bufchain_add(&$.printer_buf, "\033[4i", $.n_state_2)
+	bufchain_add(&$.printer_buf, &c, 1);
+	$.n_state_2 = 0
+
+subcode:: term_out_flush
+    $if $.n_termstate==termstate_PRINTING
+	$call term_print_flush
+
+subcode: term_print_start
+    bufchain_clear(&$.printer_buf);
+    $.p_print_job = printer_start_job(cfg.printer);
+    $.n_state_2=0
+    $.n_termstate=termstate_PRINTING
+
+subcode: term_print_finish
+    $call term_print_flush
+    printer_finish_job($.p_print_job);
+    $.p_print_job = NULL;
+    $.n_termstate = termstate_TOPLEVEL
+
+subcode: term_print_flush
+    $local void * tp_tmp_data, tn_tmp_len
+    tn_tmp_size=bufchain_size(&$.printer_buf)
+    $while tn_tmp_size>0
+	bufchain_prefix(&$.printer_buf, &tp_tmp_data, &tn_tmp_len)
+	printer_job_data($.p_print_job, tp_tmp_data, tn_tmp_len);
+	bufchain_consume(&$.printer_buf, tn_tmp_len);
+	tn_tmp_size=bufchain_size(&$.printer_buf)

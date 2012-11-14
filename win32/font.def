@@ -1,0 +1,606 @@
+include: macro/charset.def
+
+subcode:: function_list
+    $define(FONT_NORMAL) 0
+    $define(FONT_BOLD) 1
+    $define(FONT_UNDERLINE) 2
+    $define(FONT_BOLDUND) 3
+    $define(FONT_WIDE)	0x04
+    $define(FONT_HIGH)	0x08
+    $define(FONT_NARROW)	0x10
+
+    $define(FONT_OEM) 	0x20
+    $define(FONT_OEMBOLD) 	0x21
+    $define(FONT_OEMUND) 	0x22
+    $define(FONT_OEMBOLDUND) 0x23
+
+    $define(FONT_SHIFT)	5
+    $define(FONT_MAXNO) 0x2F
+
+    $global HFONT fonts[FONT_MAXNO]
+    $global int fontflag[FONT_MAXNO]
+    $global int font_width, int font_height
+    $global int font_isdbcs
+    $global extern int font_codepage, extern int line_codepage
+    $global int font_dualwidth, int font_varpitch, int font_descent
+
+    $enum(,bold_mode) BOLD_COLOURS, BOLD_SHADOW, BOLD_FONT
+    $enum(, und_mode) UND_LINE, UND_FONT
+
+    $list init_fonts, deinit_fonts, another_font
+    $list get_font_width
+
+subcode: set_fontweight
+    $local int fw_dontcare, int fw_bold
+    $if cfg.font.isbold
+	fw_dontcare = FW_BOLD;
+	fw_bold = FW_HEAVY;
+    $else
+	fw_dontcare = FW_DONTCARE;
+	fw_bold = FW_BOLD;
+
+fncode: init_fonts(n_tw, n_th)
+    $for i=0:FONT_MAXNO
+	fonts[i]=NULL
+
+    HDC hdc = GetDC(hwnd);
+    $call init_font_size
+
+    bold_mode = cfg.bold_colour ? BOLD_COLOURS : BOLD_FONT;
+    und_mode = UND_FONT;
+
+    $call set_fontweight
+    $call create_font, FONT_NORMAL, cfg.font.charset, fw_dontcare, FALSE
+    $call create_font, FONT_BOLD, cfg.font.charset, fw_bold, FALSE
+    $call create_font, FONT_UNDERLINE, cfg.font.charset, fw_dontcare, TRUE
+    fontflag[0] = fontflag[1] = fontflag[2] = 1;
+
+    $call get_font_textmetric
+    $call check_underline_font
+    $call check_bold_und_size
+
+    ReleaseDC(hwnd, hdc);
+
+    $declare void update_ucs_line_codepage(n_codepage);
+    update_ucs_line_codepage(cfg.line_codepage)
+    $call @init_linedraw
+
+fncode: deinit_fonts
+    $for i=0:FONT_MAXNO
+	$if fonts[i]
+	    DeleteObject(fonts[i])
+	fonts[i] = 0;
+	fontflag[i] = 0;
+
+# ----------------------------------------------------------------
+subcode: init_font_size
+    $if n_th
+	font_height = n_th
+    $else
+	font_height = cfg.font.height;
+	$if font_height > 0
+	    font_height = -MulDiv(font_height, GetDeviceCaps(hdc, LOGPIXELSY), 72);
+    font_width = n_tw
+
+subcode: create_font(i, charset, weight, underline)
+    fonts[$(i)] = CreateFont (font_height, font_width, 0, 0, $(weight), FALSE, $(underline), FALSE, $(charset), OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, FONT_QUALITY(cfg.font_quality), FIXED_PITCH | FF_DONTCARE, cfg.font.name)
+
+subcode: check_underline_font
+    $local COLORREF t_color
+
+    HDC und_dc = CreateCompatibleDC(hdc);
+    HBITMAP und_bm = CreateCompatibleBitmap(hdc, font_width, font_height);
+    HBITMAP und_oldbm=SelectObject(und_dc, und_bm);
+    SelectObject(und_dc, fonts[FONT_UNDERLINE]);
+    SetTextAlign(und_dc, TA_TOP | TA_LEFT | TA_NOUPDATECP);
+    SetTextColor(und_dc, RGB(255, 255, 255));
+    SetBkColor(und_dc, RGB(0, 0, 0));
+    SetBkMode(und_dc, OPAQUE);
+    ExtTextOut(und_dc, 0, 0, ETO_OPAQUE, NULL, " ", 1, NULL);
+    tb_gotit = FALSE;
+    $for i=0:font_height
+	t_color = GetPixel(und_dc, font_width / 2, i);
+	$if t_color != RGB(0, 0, 0)
+	    tb_gotit = TRUE;
+    SelectObject(und_dc, und_oldbm);
+    DeleteObject(und_bm);
+    DeleteDC(und_dc);
+    $if !tb_gotit
+	und_mode = UND_LINE;
+	DeleteObject(fonts[FONT_UNDERLINE]);
+	fonts[FONT_UNDERLINE] = 0;
+
+subcode: get_font_textmetric
+    $local TEXTMETRIC tm
+    SelectObject(hdc, fonts[FONT_NORMAL]);
+    GetTextMetrics(hdc, &tm);
+
+    $if !(tm.tmPitchAndFamily & TMPF_FIXED_PITCH)
+        font_varpitch = FALSE;
+        font_dualwidth = (tm.tmAveCharWidth != tm.tmMaxCharWidth);
+    $else
+        font_varpitch = TRUE;
+        font_dualwidth = TRUE;
+
+    font_height = tm.tmHeight;
+    font_width = get_font_width(hdc, &tm);
+
+    font_descent = tm.tmAscent + 1;
+    $if font_descent>= font_height
+	font_descent = font_height - 1;
+
+    $declare void update_ucs_charset(DWORD n_cs);
+    update_ucs_charset(tm.tmCharSet)
+
+subcode: check_bold_und_size
+    $local int fontsize[3]
+    $for i=0:3
+	$if fonts[i]
+	    $if SelectObject(hdc, fonts[i]) && GetTextMetrics(hdc, &tm)
+		fontsize[i] = get_font_width(hdc, &tm) + 256 * tm.tmHeight;
+	    $else
+		fontsize[i] = -i;
+	$else
+	    fontsize[i] = -i;
+
+
+    $if fontsize[FONT_UNDERLINE] != fontsize[FONT_NORMAL]
+	und_mode = UND_LINE;
+	DeleteObject(fonts[FONT_UNDERLINE]);
+	fonts[FONT_UNDERLINE] = 0;
+
+    $if bold_mode == BOLD_FONT && fontsize[FONT_BOLD] != fontsize[FONT_NORMAL]
+	bold_mode = BOLD_SHADOW;
+	DeleteObject(fonts[FONT_BOLD]);
+	fonts[FONT_BOLD] = 0;
+
+fncode: get_font_width(HDC hdc, TEXTMETRIC *tm)
+    $return_type int
+    $if !(tm->tmPitchAndFamily & TMPF_FIXED_PITCH)
+	# TMPF_FIXED_PITCH means the opposite!
+        return tm->tmAveCharWidth;
+    $else
+	$(mset:FIRST='0',LAST='9')
+        $local ABCFLOAT abc_widths[$(LAST)-$(FIRST) + 1];
+
+        font_varpitch = TRUE;
+        font_dualwidth = TRUE;
+        $if GetCharABCWidthsFloat(hdc, $(FIRST), $(LAST), abc_widths)
+	    $for i=0:lenof(abc_widths)
+		$(set:abc=abc_widths[i].abcf)
+                tn_width = (int)(0.5 + $(abc)A +$(abc)B + $(abc)C)
+                $if tn_width>0
+                    return tn_width
+        $else
+            return tm->tmMaxCharWidth;
+    return 0
+# ---------------------------------------------------------------------
+fncode: another_font(n)
+
+    $if n < 0 || n >= FONT_MAXNO || fontflag[n]
+	return;
+
+    tn_basefont = (n & ~(FONT_BOLDUND));
+    $if tn_basefont != n && !fontflag[tn_basefont])
+	another_font(tn_basefont);
+
+    $call set_fontweight
+
+    tn_font_width = font_width;
+    $if n & FONT_WIDE
+	tn_font_width *= 2;
+    $elif n & FONT_NARROW
+	tn_font_width = (tn_font_width+1)/2;
+
+    tn_font_height=font_height
+    $if n & FONT_HIGH
+	tn_font_height*=2
+
+    $if n & FONT_OEM
+	tn_font_charset = OEM_CHARSET;
+    $else
+	tn_font_charset = cfg.font.charset;
+
+    $if n & FONT_BOLD
+	tn_font_weight = fw_bold;
+    $else
+	tn_font_weight = fw_dontcare;
+
+    $if n & FONT_UNDERLINE
+	tb_font_underline = TRUE;
+    $else
+	tb_font_underline = FALSE;
+
+    fonts[n] = CreateFont(tn_font_height, tn_font_width, 0, 0, tn_font_weight, FALSE, tb_font_underline, FALSE, tn_font_charset, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, FONT_QUALITY(cfg.font_quality), DEFAULT_PITCH | FF_DONTCARE, cfg.font.name);
+    fontflag[n] = 1;
+
+# ---------------------------------------------------------------------
+subcode: dotext_process_attr
+    $if n_lattr != LATTR_NORM && x*2 >= n_cols
+	return;
+
+    $if n_attr & ATTR_UNDER && n_lattr != LATTR_TOP
+	tb_do_underline=1
+    $else
+	tb_do_underline=0
+
+    $if (n_attr & TATTR_ACTCURS) && cfg.cursor_type == 0 
+	n_attr &= ~(ATTR_REVERSE|ATTR_BLINK|ATTR_COLOURS);
+	$if bold_mode == BOLD_COLOURS
+	    n_attr &= ~ATTR_BOLD;
+	n_attr |= (260 << ATTR_FGSHIFT) | (261 << ATTR_BGSHIFT);
+
+subcode: dotext_position
+    $if n_lattr == LATTR_NORM
+	tn_fnt_width = font_width
+    $else
+	tn_fnt_width = font_width*2
+
+    tn_x=x*tn_fnt_width+offset_width
+    tn_y=y*font_height+offset_height
+
+    $if n_attr & ATTR_WIDE
+	tn_char_width = tn_fnt_width*2
+    $else
+	tn_char_width = tn_fnt_width
+
+
+subcode: dotext_tn_font
+    $if bold_mode == BOLD_FONT && (n_attr & ATTR_BOLD)
+	tn_font |= FONT_BOLD;
+    $if tb_do_underline && und_mode == UND_FONT && !tb_force_underline
+	tn_font |= FONT_UNDERLINE;
+    another_font(tn_font);
+    $if !fonts[tn_font]
+	tn_font &= ~(FONT_BOLD | FONT_UNDERLINE);
+	another_font(tn_font);
+    $if !fonts[tn_font]
+	tn_font = FONT_NORMAL;
+
+    $if tn_font & FONT_UNDERLINE
+	tb_do_underline=0
+
+subcode: dotext_compose_tn_font
+    tn_font = 0;
+    $if cfg.vtmode == VT_POORMAN && n_lattr != LATTR_NORM
+	n_lattr = LATTR_WIDE;
+    $else
+	$if n_lattr == LATTR_NORM
+	    tn_font =0
+	$elif n_lattr==LATTR_WIDE
+	    tn_font = FONT_WIDE
+	$else
+	    tn_font = FONT_WIDE+FONT_HIGH
+
+    $if n_attr & ATTR_NARROW
+	tn_font |= FONT_NARROW;
+
+    $if (text[0] & CSET_MASK) == CSET_OEMCP
+	tn_font |= FONT_OEM;
+
+subcode: dotext_fg_bg
+    $call get_attr_fg, n_attr, tn_fg
+    $call get_attr_bg, n_attr, tn_bg
+    $if n_attr & ATTR_REVERSE
+	tn_temp = tn_fg;
+	tn_fg = tn_bg;
+	tn_bg = tn_temp;
+
+    $if bold_mode == BOLD_COLOURS
+	$if n_attr & ATTR_BOLD
+	    $if tn_fg < 16 
+		tn_fg |= 8;
+	    $elif tn_fg >= 256 
+		tn_fg |= 1;
+	$if n_attr & ATTR_BLINK
+	    $if tn_bg < 16 
+		tn_bg |= 8;
+	    $elif tn_bg >= 256 
+		tn_bg |= 1;
+
+subcode: dotext_fg_bg_color
+    $local COLORREF color_fg, COLORREF color_bg
+    color_fg = colours[tn_fg];
+    color_bg = colours[tn_bg];
+    #printf("fg: %d %8x; bg: %d %8x\n", tn_fg, color_fg, tn_bg, color_bg)
+    SelectObject(hdc, fonts[tn_font]);
+    SetTextColor(hdc, color_fg);
+    SetBkColor(hdc, color_bg);
+
+subcode: dotext_rct_line
+    $local RECT rct_line
+    rct_line.left = tn_x;
+    rct_line.top = tn_y;
+    rct_line.right = tn_x + tn_char_width * n_len;
+    rct_line.bottom = tn_y + font_height;
+    # Double width lines
+    $if rct_line.right > font_width*n_cols+offset_width
+	rct_line.right = font_width*n_cols+offset_width
+
+subcode: dotext_opaque
+    $if b_opaque
+	$call local_brush, tn_bg_brush, color_bg
+	FillRect(hdc, &rct_line, tn_bg_brush)
+    SetBkMode(hdc, TRANSPARENT)
+
+subcode: dotext_buffer(name, len, type)
+    $local static $(type) *$(name)_buf=NULL
+    $local static int    $(name)_len=0
+    $if $(name)_len<$(len)
+	sfree($(name)_buf)
+	$(name)_len=$(len)*9/8+16
+	$(name)_buf=snewn($(name)_len, $(type))
+
+subcode: dotext_normal
+    $call dotext_buffer, w, tn_len, WCHAR
+    $for i=0:tn_len
+	w_buf[i] = text[i];
+
+    general_textout(hdc, tn_x, tn_y, &rct_line, w_buf, tn_len, lpDx_buf)
+
+    $if bold_mode == BOLD_SHADOW && (n_attr & ATTR_BOLD)
+	SetBkMode(hdc, TRANSPARENT);
+	ExtTextOutW(hdc, tn_x-1, tn_y, ETO_CLIPPED, &rct_line, w_buf, tn_len, lpDx_buf);
+
+subcode: dotext_dbcs
+    $call dotext_buffer, uni, tn_len, wchar_t
+    $call dotext_to_dbcs
+    ExtTextOutW(hdc, tn_x, tn_y, ETO_CLIPPED, &rct_line, uni_buf, tn_i_buff, lpDx_buf);
+    $if bold_mode == BOLD_SHADOW && (n_attr & ATTR_BOLD)
+	SetBkMode(hdc, TRANSPARENT);
+	ExtTextOutW(hdc, tn_x - 1, tn_y, ETO_CLIPPED, &rct_line, uni_buf, tn_i_buff, lpDx_buf);
+    lpDx_buf[0] = -1;
+
+subcode: dotext_direct
+    $call dotext_buffer, direct, tn_len, char
+    $for i=0:tn_len
+	direct_buf[i] = text[i] & 0xFF;
+    direct_buf[tn_len]='\0'
+    ExtTextOut(hdc, tn_x, tn_y, ETO_CLIPPED, &rct_line, direct_buf, tn_len, lpDx_buf);
+    $if bold_mode == BOLD_SHADOW && (n_attr & ATTR_BOLD)
+	SetBkMode(hdc, TRANSPARENT);
+	ExtTextOut(hdc, tn_x - 1, tn_y, ETO_CLIPPED, &rct_line, direct_buf, tn_len, lpDx_buf);
+
+subcode: dotext_underline
+    tn_dec = font_descent;
+    $if n_lattr == LATTR_BOT
+	tn_dec = tn_dec * 2 - font_height;
+
+    $call quick_pen, PS_SOLID, 0, color_fg
+    MoveToEx(hdc, rct_line.left, rct_line.top + tn_dec, NULL);
+    LineTo(hdc, rct_line.right, rct_line.top + tn_dec);
+
+subcode: dotext_to_dbcs
+    tn_i_buff=0
+    tn_i_text=0
+    $local char dbcstext[2];
+    $while tn_i_text<tn_len
+	uni_buf[tn_i_buff] = 0xFFFD;
+	$if IsDBCSLeadByteEx(font_codepage, (BYTE) text[tn_i_text])
+	    dbcstext[0] = text[tn_i_text] & 0xFF;
+	    tn_i_text++;
+	    dbcstext[1] = text[tn_i_text] & 0xFF;
+	    tn_i_text++;
+	    lpDx_buf[tn_i_buff] += tn_char_width;
+	    MultiByteToWideChar(font_codepage, MB_USEGLYPHCHARS, dbcstext, 2, uni_buf+tn_i_buff, 1);
+	$else
+	    dbcstext[0] = text[tn_i_text] & 0xFF;
+	    tn_i_text++;
+	    MultiByteToWideChar(font_codepage, MB_USEGLYPHCHARS, dbcstext, 1, uni_buf+tn_i_buff, 1);
+	tn_i_buff++;
+
+# ===============================================================================
+subcode:: function_list
+    $list general_textout, do_text_internal, do_text, do_cursor
+
+fncode: do_text_internal(int x, int y, wchar_t *text, n_len, unsigned long n_attr, n_lattr, b_opaque)
+    $local HDC hdc=cur_hdc
+    $call dotext_process_attr
+    $call dotext_position
+    $call @linedraw_adjust
+    $call dotext_compose_tn_font
+    $call dotext_tn_font
+
+    /* Anything left as an original character set is unprintable. */
+    $if DIRECT_CHAR(text[0])
+	$for i=0:n_len
+	    text[i] = 0xFFFD;
+
+    $call dotext_fg_bg
+    $call dotext_fg_bg_color
+    $call dotext_rct_line
+    $call dotext_opaque
+
+    # -------------------------------------------
+    tn_xoffset=0
+    $if font_varpitch
+        tn_xoffset = tn_char_width / 2;
+        SetTextAlign(hdc, TA_TOP | TA_CENTER | TA_NOUPDATECP);
+        tn_maxlen = 1;
+    $else
+        tn_xoffset = 0;
+        SetTextAlign(hdc, TA_TOP | TA_LEFT | TA_NOUPDATECP);
+        tn_maxlen = n_len;
+
+    tn_x+=tn_xoffset
+    tn_y+=tn_yoffset
+    $if n_lattr==LATTR_BOT
+	tn_y-=font_height
+
+    tn_remain=n_len
+    $while tn_remain>0
+        tn_len = (tn_maxlen < tn_remain ? tn_maxlen : tn_remain);
+	$call dotext_buffer, lpDx, tn_len, int
+	$for i=0:tn_len
+	    lpDx_buf[i] = tn_char_width;
+
+        $if font_isdbcs && (text[0] & CSET_MASK) == CSET_ACP
+	    $call dotext_dbcs
+        $elif DIRECT_FONT(text[0])
+	    $call dotext_direct
+        $else
+            $call dotext_normal
+
+	 tn_x += tn_char_width * tn_len
+	 text += tn_len 
+	 tn_remain -= tn_len
+
+    $if tb_do_underline
+	$call dotext_underline
+
+# ----
+fncode: do_text(int x, int y, wchar_t *text, n_len, unsigned long n_attr, n_lattr)
+    $local HDC hdc=cur_hdc
+    # Wrapper that handles combining characters.
+    $if n_attr & TATTR_COMBINING
+	n_attr&=~TATTR_COMBINING
+	do_text_internal(x, y, text, 1, n_attr, n_lattr, 1);
+	text++
+	$for i=1:n_len
+	    do_text_internal(x, y, text, 1, n_attr, n_lattr, 0);
+	    text++;
+    $else
+	do_text_internal(x, y, text, n_len, n_attr, n_lattr, 1);
+
+# ----
+subcode: do_cursor_box
+    $local POINT pts[5];
+    pts[0].x = pts[1].x = tn_x;
+    pts[2].x = pts[3].x = tn_x + tn_char_width - 1;
+    pts[0].y = pts[3].y = tn_y;
+    pts[1].y = pts[2].y = tn_y + font_height - 1;
+    pts[4]=pts[0]
+    $call quick_pen, color_cursor
+    Polyline(hdc, pts, 5);
+subcode: do_cursor_vert(xoff, ps)
+    $call quick_pen, $(ps), color_cursor
+    MoveToEx(hdc, tn_x+$(xoff), tn_y, NULL);
+    LineTo(hdc, tn_x + $(xoff), tn_y+font_height);
+subcode: do_cursor_under(yoff, ps)
+    $call quick_pen, $(ps), color_cursor
+    MoveToEx(hdc, tn_x, tn_y+$(yoff), NULL)
+    LineTo(hdc, tn_x + tn_char_width, tn_y+$(yoff))
+
+fncode: do_cursor(int x, int y, wchar_t *text, n_len, unsigned long n_attr, n_lattr)
+    $local HDC hdc=cur_hdc
+    tn_cursor_type=cfg.cursor_type
+
+    $if n_attr & TATTR_ACTCURS && tn_cursor_type == 0
+	$if *text != UCSWIDE 
+	    do_text(x, y, text, n_len, n_attr, n_lattr);
+	    return;
+	$else
+	    tn_cursor_type = 2;
+	    n_attr |= TATTR_RIGHTCURS;
+
+    $call dotext_position
+    COLORREF color_cursor=colours[261]
+
+    $if tn_cursor_type == 0
+	$call do_cursor_box
+    $else
+	$if n_attr & TATTR_ACTCURS
+	    BLOCK RELEASE
+	    $call quick_pen, PS_SOLID, color_cursor
+	$else
+	    BLOCK RELEASE
+	    $call quick_pen, PS_DOT, color_cursor
+
+	$if tn_cursor_type == 1
+	    $call do_cursor_under, font_descent, PS_SOLID
+	$elif n_attr & TATTR_RIGHTCURS
+	    $call do_cursor_vert, tn_char_width-1, PS_SOLID
+	$else
+	    $call do_cursor_vert, 0, PS_SOLID
+
+# -----------------------------------------------
+fncode: general_textout(HDC hdc, int x, int y, CONST RECT *lprc, unsigned short *lpString, n_len, CONST INT *lpDx_buf)
+    tn_opt=ETO_CLIPPED
+    $if n_len>0
+	tn_x=x
+	tn_x_next=x
+
+	$for i=0;i<n_len;
+	    tb_rtl = is_rtl(lpString[i]);
+
+	    tn_x_next += lpDx_buf[i];
+
+	    $for j=i+1:n_len
+		$if tb_rtl != is_rtl(lpString[j])
+		    break;
+		$else
+		    tn_x_next += lpDx_buf[j];
+
+	    $if tb_rtl
+		tn_temp=(j-i)*2+2
+		$allocate(tn_temp,0) ts_idx
+		$call get_char_placement, lpString+i, j-i, ts_idx
+		ExtTextOut(hdc, tn_x, y, ETO_GLYPH_INDEX|tn_opt, lprc, ts_idx, j-i, lpDx_buf+i);
+		free(ts_idx)
+	    $else
+		ExtTextOutW(hdc, tn_x, y, tn_opt, lprc, lpString+i, j-i, font_varpitch ? NULL : lpDx_buf+i);
+
+	    i = j;
+	    tn_x = tn_x_next;
+
+subcode: get_char_placement(str, len, buf)
+    $local GCP_RESULTSW gcpr;
+    memset(&gcpr, 0, sizeof(gcpr));
+    $allocate($(len),GCPCLASS_NEUTRAL) ts_classbuffer
+    gcpr.lStructSize = sizeof(gcpr);
+    gcpr.lpGlyphs = (void *)$(buf)
+    gcpr.lpClass = (void *)ts_classbuffer
+    gcpr.nGlyphs = $(len)
+    GetCharacterPlacementW(hdc, lpString, $(len), 0, &gcpr, FLI_MASK | GCP_CLASSIN | GCP_DIACRITIC);
+    free(ts_classbuffer)
+
+# =====================================================================
+# only called once in term.c
+subcode:: function_list
+    $list char_width
+
+fncode: char_width(tn_char)
+    $if !font_dualwidth 
+	return 1;
+    $if !cur_hdc
+	return 1
+    $local HDC hdc=cur_hdc
+
+    tn_cw=0
+
+    $call decode_cset_1, tn_char
+
+    $if DIRECT_FONT(tn_char)
+	$if  font_isdbcs
+	    return 1;
+
+	$if (tn_char&~CSET_MASK) >= ' ' && (tn_char&~CSET_MASK)<= '~'
+	    return 1;
+
+	$if (tn_char & CSET_MASK) == CSET_ACP 
+	    SelectObject(hdc, fonts[FONT_NORMAL]);
+	$elif (tn_char & CSET_MASK) == CSET_OEMCP
+	    another_font(FONT_OEM);
+	    if (!fonts[FONT_OEM]) return 0;
+	    SelectObject(hdc, fonts[FONT_OEM]);
+	$else
+	    return 0;
+
+	$if GetCharWidth32(hdc, tn_char&~CSET_MASK, tn_char&~CSET_MASK, &tn_cw) != 1 && GetCharWidth(hdc, tn_char&~CSET_MASK, tn_char&~CSET_MASK, &tn_cw) != 1
+	    return 0;
+    $else
+	if (tn_char >= ' ' && tn_char <= '~') return 1;
+
+	SelectObject(hdc, fonts[FONT_NORMAL]);
+	$if GetCharWidth32W(hdc, tn_char, tn_char, &tn_cw) == 1
+	    # /* Okay that one worked */ ;
+	$elif GetCharWidthW(hdc, tn_char, tn_char, &tn_cw) == 1 
+	    # /* This should work on 9x too, but it's "less accurate" */ ;
+	$else
+	    return 0;
+
+    tn_cw += font_width / 2 -1;
+    tn_cw /= font_width;
+
+    return tn_cw;
+

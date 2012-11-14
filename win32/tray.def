@@ -1,0 +1,194 @@
+subcode:: function_list
+    $define(WM_NOTIFY_PUTTYTRAY) (WM_USER + 1983)
+    $global int puttyTrayVisible
+    $global int puttyTrayFlash
+    $global HICON puttyTrayFlashIcon
+    $global int windowMinimized=0
+    $global NOTIFYICONDATA puttyTray
+    $list taskbar_addicon
+
+subcode:: WinMain_PreShow
+    $call init_tray
+
+subcode:: WinMain_CleanUp
+    taskbar_addicon("", FALSE);
+    DestroyIcon(puttyTray.hIcon);
+
+# -------------------------
+subcode: init_tray
+    puttyTray.cbSize = sizeof(NOTIFYICONDATA); 
+    puttyTray.hWnd	= hwnd; 
+    puttyTray.uID	= 1983; 
+    puttyTray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP; 
+    puttyTray.uCallbackMessage = WM_NOTIFY_PUTTYTRAY;
+    puttyTray.hIcon	= wc.hIconSm;
+
+    # Set trayicon menu properties 
+    $local MENUINFO info_menu
+    memset(&info_menu, 0, sizeof(MENUINFO));
+    info_menu.cbSize = sizeof(MENUINFO);
+
+    info_menu.fMask = MIM_STYLE;
+    info_menu.dwStyle = MNS_NOCHECK | MNS_AUTODISMISS;
+
+    SetMenuInfo(popup_menus[MENU_CTX], &info_menu);
+	    
+subcode: tray_show_window
+    # WinMain
+    puttyTrayVisible = FALSE;
+	
+    $if cfg.tray == TRAY_START || cfg.tray == TRAY_ALWAYS
+	$call show_tray
+    $if cfg.tray == TRAY_START
+	ShowWindow(hwnd, SW_HIDE);
+	windowMinimized = TRUE;
+    $else
+	$call show_window
+
+# ---------------------------
+fncode: taskbar_addicon(ts_tip, tb_show)
+    $if tb_show
+	$if ts_tip
+	    strncpy(puttyTray.szTip, ts_tip, sizeof(puttyTray.szTip));
+	$else
+	    puttyTray.szTip[0] = (TCHAR)'\0'; 
+
+	$if !puttyTrayVisible
+	    tray_updatemenu(TRUE);
+	    tn_ret = Shell_NotifyIcon(NIM_ADD, &puttyTray);
+	    puttyTrayVisible = TRUE;
+	    return tn_ret; 
+	$else
+	    tn_ret = Shell_NotifyIcon(NIM_MODIFY, &puttyTray);
+	    return tn_ret; 
+    $else
+	$if puttyTrayVisible
+	    tray_updatemenu(FALSE);
+	    tn_ret = Shell_NotifyIcon(NIM_DELETE, &puttyTray);
+	    puttyTrayVisible = FALSE;
+	    return tn_ret; 
+    return 1 
+
+subcode: show_tray
+    taskbar_addicon(cfg.win_name_always ? window_name : icon_name, TRUE);
+subcode: hide_tray
+    taskbar_addicon(cfg.win_name_always ? window_name : icon_name, FALSE);
+subcode:: Update_Window_Title
+    taskbar_addicon(cfg.win_name_always ? window_name : icon_name, puttyTrayVisible);
+# ---------------------------
+subcode:: main_on_WM_SIZE
+    $if wparam == SIZE_MINIMIZED
+	$if cfg.tray == TRAY_NORMAL || cfg.tray == TRAY_START || is_ctrl_pressed()
+	    $call show_tray
+	    ShowWindow(hwnd, SW_HIDE);
+
+subcode: on_IDM_TRAYRESTORE
+    ShowWindow(hwnd, SW_RESTORE);
+    SetForegroundWindow(hwnd);
+    windowMinimized = FALSE;
+    $if cfg.tray != TRAY_ALWAYS
+        $call hide_tray
+
+subcode: on_IDM_TRAYCLOSE
+    SendMessage(hwnd, WM_CLOSE, (WPARAM)NULL, (LPARAM)NULL);
+
+subcode: main_on_WM_NOTIFY_PUTTYTRAY:
+    $(set:uID=(UINT)wparam)
+    $(set:uMouseMsg=(UINT)lparam)
+
+    $if $(uID) == 1983
+	$if  $(uMouseMsg) == WM_LBUTTONDBLCLK || (cfg.tray_restore == TRUE && $(uMouseMsg) == WM_LBUTTONUP) 
+	    $if cfg.tray != TRAY_ALWAYS
+		taskbar_addicon(cfg.win_name_always ? window_name : icon_name, FALSE);
+
+	    # Sleep a little while, otherwise the click event is sent to, for example, the Outlook 2003 Tray Icon, and it will also pop its menu.
+	    Sleep(100); 
+
+	    # If trayicon is always visible, the icon should also be able to hide the window
+	    $if windowMinimized
+		ShowWindow(hwnd, SW_RESTORE);
+		SetForegroundWindow(hwnd);
+		windowMinimized = FALSE;
+	    $else
+		ShowWindow(hwnd, SW_MINIMIZE);
+		windowMinimized = TRUE;
+	$elif $(uMouseMsg) == WM_RBUTTONUP
+	    POINT cursorpos;
+	    SetForegroundWindow(hwnd);
+	    show_mouseptr(1);
+	    GetCursorPos(&cursorpos);
+	    TrackPopupMenu(popup_menus[MENU_CTX], TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON, cursorpos.x, cursorpos.y, 0, hwnd, NULL);
+	    PostMessage(hwnd, WM_NULL, 0, 0);
+    break;
+
+# -------------------------------------------------------
+subcode:: function_list
+    $list tray_updatemenu
+
+# -------------------------------------------
+fncode: tray_updatemenu(int disableMenuItems)
+    $local MENUITEMINFO info_menuitem
+    memset(&info_menuitem, 0, sizeof(MENUITEMINFO));
+    info_menuitem.cbSize = sizeof(MENUITEMINFO);
+
+    $if disableMenuItems
+	$call ctxmenu_delete, IDM_TRAYSEP
+	$call ctxmenu_delete, IDM_TRAYRESTORE
+	$call ctxmenu_delete, IDM_TRAYCLOSE
+	$call ctxmenu_append, IDM_TRAYSEP, MF_SEPARATOR, 0
+	$call ctxmenu_append, IDM_TRAYRESTORE, MF_STRING, "&Restore Window"
+	$call ctxmenu_append, IDM_TRAYCLOSE, MF_STRING, "&Exit"
+
+	# Set restore icon on restore menuitem
+	info_menuitem.hbmpItem = HBMMENU_POPUP_RESTORE;
+	SetMenuItemInfo(popup_menus[MENU_CTX], IDM_TRAYRESTORE, FALSE, &info_menuitem);
+
+	# Set X bitmap on close window menuitem
+	info_menuitem.fMask = MIIM_BITMAP;
+	info_menuitem.hbmpItem = HBMMENU_POPUP_CLOSE;
+	SetMenuItemInfo(popup_menus[MENU_CTX], IDM_TRAYCLOSE, FALSE, &info_menuitem);
+	
+	info_menuitem.fMask = MIIM_STATE;
+	info_menuitem.fState = MFS_GRAYED;
+    $else
+	$call ctxmenu_delete, IDM_TRAYSEP
+	$call ctxmenu_delete, IDM_TRAYRESTORE
+	$call ctxmenu_delete, IDM_TRAYCLOSE
+	    
+	info_menuitem.fMask = MIIM_STATE;
+	info_menuitem.fState = MFS_ENABLED;
+    
+    SetMenuItemInfo(popup_menus[MENU_CTX], (UINT)menu_specials, FALSE, &info_menuitem);
+    SetMenuItemInfo(popup_menus[MENU_CTX], IDM_PASTE, FALSE, &info_menuitem);
+    SetMenuItemInfo(popup_menus[MENU_CTX], IDM_FULLSCREEN, FALSE, &info_menuitem);
+    SetMenuItemInfo(popup_menus[MENU_CTX], IDM_RESET, FALSE, &info_menuitem);
+    SetMenuItemInfo(popup_menus[MENU_CTX], IDM_CLRSB, FALSE, &info_menuitem);
+    SetMenuItemInfo(popup_menus[MENU_CTX], IDM_COPYALL, FALSE, &info_menuitem);
+
+# -------------------------------------------------------------------
+subcode: tray_flash_stop
+    puttyTray.hIcon = puttyTrayFlashIcon;
+    if (puttyTrayVisible) {
+	    puttyTrayFlash = FALSE;
+	    taskbar_addicon(cfg.win_name_always ? window_name : icon_name, TRUE);
+    }
+
+subcode: tray_flash_start
+    if (puttyTrayVisible) {
+	    puttyTrayFlash = FALSE;
+    }
+
+subcode: tray_flash
+    if (puttyTrayVisible) {
+	    if (!puttyTrayFlash) {
+		    puttyTrayFlash = TRUE;
+
+		    puttyTray.hIcon	= NULL;
+		    taskbar_addicon(cfg.win_name_always ? window_name : icon_name, TRUE);
+	    } else {
+		    puttyTrayFlash = FALSE;
+
+		    puttyTray.hIcon = puttyTrayFlashIcon;
+		    taskbar_addicon(cfg.win_name_always ? window_name : icon_name, TRUE);
+	    }
+    }

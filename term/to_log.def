@@ -1,0 +1,27 @@
+
+subcode:: function_list
+    $list term_provide_logctx
+
+subcode:: on_term_init
+    $map term_decl, void *logctx
+    $.logctx = NULL;
+
+fncode: term_provide_logctx(Terminal *term, void *logctx)
+    $.logctx = logctx;
+
+# ----
+subcode:: term_out_flush
+    $if cfg.logflush && $.logctx
+    	logflush($.logctx);
+
+subcode: term_out_log_debug
+    $if cfg.logtype == LGTYP_DEBUG && $.logctx
+	logtraffic($.logctx, (unsigned char) c, LGTYP_DEBUG);
+
+subcode: term_out_log_ascii
+    $if ((c & CSET_MASK) == CSET_ASCII || (c & CSET_MASK) == 0) && $.logctx
+	logtraffic($.logctx, (unsigned char) c, LGTYP_ASCII);
+
+subcode: term_out_log_traffic
+    $if $.logctx
+	logtraffic($.logctx, (unsigned char) c, LGTYP_ASCII);

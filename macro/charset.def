@@ -1,0 +1,123 @@
+/*
+    If the console is in utf8 mode, the kernel expect user program output coded in UTF-8 and converts to ucs2
+    Otherwise, a translation table is used from 8-bit to 16-bit values -- Unicode console map, or cmap
+
+    Old fonts does not support unicode. There is direct to font maps.
+*/
+subcode: charset_defines
+    # Options to map line drawing chracters
+    $enumbase(VT) XWINDOWS, OEMANSI, OEMONLY, POORMAN, UNICODE
+
+    $define(CSET_MASK)    0xFFFFFF00UL     # /* Character set mask */
+    # /* Like Linux use the F000 page for direct to font. */
+    $define(DIRECT_FONT(c)) ((c&0xFFFFFE00)==0xF000)
+    $define(CSET_OEMCP)   0x0000F000UL     # /* OEM Codepage DTF */
+    $define(CSET_ACP)     0x0000F100UL     # /* Ansi Codepage DTF */
+
+    # These are internal use overlapping with the UTF-16 surrogates 
+    $define(DIRECT_CHAR(c)) ((c&0xFFFFFC00)==0xD800)
+    $define(CSET_ASCII)   0x0000D800UL     # normal ASCII charset
+    $define(CSET_LINEDRW) 0x0000D900UL     # line drawing charset
+    $define(CSET_SCOACS)  0x0000DA00UL     # SCO Alternate charset
+    $define(CSET_GBCHR)   0x0000DB00UL     # UK variant charset ESC
+
+    $define(CSET_OF(c)) (DIRECT_CHAR(c)||DIRECT_FONT(c)?(c)&CSET_MASK:0)
+
+    $define(UCSWIDE)      0xDFFF
+    $define(UCSERR)       (CSET_LINEDRW|'a') # 0xD961
+
+# #### LineDraw Translations ######################################################
+subcode: declare_cmap
+    # Complicated as lack of description
+    $global extern wchar_t unitab_scoacs[256]
+    $global extern wchar_t unitab_line[256]
+    $global extern wchar_t unitab_font[256]
+    $global extern wchar_t unitab_draw[256]
+    $global extern wchar_t unitab_oemcp[256]
+    $global extern unsigned char unitab_ctrl[256];
+
+# used in term_out
+subcode: encode_non_ctrl(c, ATTR)
+    $if unitab_ctrl[$(c)] != 0xFF 
+	$(c) = unitab_ctrl[$(c)];
+    $else 
+	$(c) = ((unsigned char)$(c))|$(ATTR)
+
+subcode: encode_ascii(c)
+    $call encode_non_ctrl, $(c), CSET_ASCII
+
+subcode: encode_cset(c, cset)
+    $if $(cset)==CSET_LINEDRW
+	$call encode_non_ctrl, c, CSET_LINEDRW
+    $elif $(cset)==CSET_GBCHR || $(cset)==CSET_ASCII
+	$if $(cset)==CSET_GBCHR && c=='#'
+	    c = '}' | CSET_LINEDRW;
+	$else
+	    $call encode_non_ctrl, c, CSET_ASCII
+    $elif $(cset)==CSET_SCOACS
+	$if c>=' '
+	    c = ((unsigned char)c) | CSET_SCOACS;
+
+# used in init_font(w,h)
+subcode: init_linedraw
+    $declare void update_ucs_linedraw(int n_vtmode);
+    update_ucs_linedraw(cfg.vtmode)
+
+# used in fncode: char_width(hdc, c)
+# used in term/paste.def
+subcode: decode_cset(c)
+    $call decode_cset_1, $(c)
+    $call decode_cset_2, $(c)
+
+subcode: decode_cset_1(c)
+    $call declare_cmap
+    $switch $(c) & CSET_MASK
+	case CSET_ASCII:
+	    $(c) = unitab_line[$(c) & 0xFF];
+	    break;
+	case CSET_LINEDRW:
+	    $(c) = unitab_draw[$(c) & 0xFF];
+	    break;
+	case CSET_SCOACS:
+	    $(c) = unitab_scoacs[$(c) & 0xFF];
+	    break;
+
+subcode: decode_cset_2(c)
+    $switch $(c) & CSET_MASK
+	case CSET_ACP:
+	    $(c) = unitab_font[$(c) & 0xFF];
+	    break;
+	case CSET_OEMCP:
+	    $(c) = unitab_oemcp[$(c) & 0xFF];
+	    break;
+
+# used in term_paint
+subcode: get_blank_char(c)
+    $(c)=unitab_line[' ']
+
+# used in do_text_internal(...) 
+subcode: linedraw_adjust
+    # horizontal scanline at different hights
+    $local tn_yoffset=0
+    $if text[0] >= 0x23BA && text[0] <= 0x23BD
+	$switch (unsigned char)text[0]
+	  case 0xBA:
+	    tn_yoffset = -2 * font_height / 5;
+	    break;
+	  case 0xBB:
+	    tn_yoffset = -1 * font_height / 5;
+	    break;
+	  case 0xBC:
+	    tn_yoffset = font_height / 5;
+	    break;
+	  case 0xBD:
+	    tn_yoffset = 2 * font_height / 5;
+	    break;
+	$if n_lattr == LATTR_TOP || n_lattr == LATTR_BOT
+	    tn_yoffset *= 2;
+
+	text[0] = unitab_draw['q'];
+	$if tb_do_underline
+	    $local tb_force_underline=0
+	    tb_force_underline=1
+

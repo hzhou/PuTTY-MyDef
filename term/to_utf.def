@@ -1,0 +1,81 @@
+
+# ---- UTF8 -----------------------------------------------------
+subcode:: on_term_init
+    $map term_decl, n_utf_state, n_utf_size, unsigned long n_utf_char
+    $.n_utf_state=0
+    $.n_utf_size=0
+
+subcode: term_out_filter_utf8
+    $if $.n_utf_state==0
+	$if c<0x80
+	    $call encode_ascii, c
+	$else
+	    $call term_out_utf8_firstbyte
+	    continue;
+    $else
+	$call term_out_utf8_nextbyte
+	$if $.n_utf_state>0
+	    continue;
+	$else 
+	    c = $.n_utf_char;
+	    $call term_out_utf8_sanity
+
+subcode: term_out_utf8_firstbyte
+    $if c < 0x80
+	# $.n_utf_state=0
+    $elif (c & 0xe0) == 0xc0
+	# 110xxxxx 10xxxxxx
+	$.n_utf_size = $.n_utf_state = 1;
+	$.n_utf_char = (c & 0x1f);
+    $elif (c & 0xf0) == 0xe0
+	# 1110xxxx 10xxxxxx 10xxxxxx
+	$.n_utf_size = $.n_utf_state = 2;
+	$.n_utf_char = (c & 0x0f);
+    $elif (c & 0xf8) == 0xf0
+	# 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+	$.n_utf_size = $.n_utf_state = 3;
+	$.n_utf_char = (c & 0x07);
+    $elif (c & 0xfc) == 0xf8
+	# 111110xx 10xxxxxx	10xxxxxx 10xxxxxx 10xxxxxx
+	$.n_utf_size = $.n_utf_state = 4;
+	$.n_utf_char = (c & 0x03);
+    $elif (c & 0xfe) == 0xfc
+	# 1111110x 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx
+	$.n_utf_size = $.n_utf_state = 5;
+	$.n_utf_char = (c & 0x01);
+    $else
+	c = UCSERR;
+
+subcode: term_out_utf8_nextbyte
+    $if (c & 0xC0) != 0x80
+	tn_unget = c
+	c = UCSERR
+	$.n_utf_state = 0;
+    $else
+	$.n_utf_char = ($.n_utf_char << 6) | (c & 0x3f);
+	$.n_utf_state--
+
+subcode: term_out_utf8_sanity
+    $if c < 0x80 || (c < 0x800 && $.n_utf_size >= 2) || (c < 0x10000 && $.n_utf_size >= 3) || (c < 0x200000 && $.n_utf_size >= 4) || (c < 0x4000000 && $.n_utf_size >= 5)
+	c = UCSERR;
+    $elif c == 0x2028 || c == 0x2029
+	/* Unicode line separator and paragraph separator are CR-LF */
+	c = 0x85;
+    $elif c < 0xA0
+	/* High controls are probably a Baaad idea too. */
+	c = 0xFFFD;
+    $elif c >= 0xD800 && c < 0xE000
+	/* The UTF-16 surrogates are not nice either. */
+	c = UCSERR;
+    $elif c > 0x10FFFF
+	/* ISO 10646 characters now limited to UTF-16 range. */
+	c = UCSERR;
+    $elif c >= 0xE0000 && c <= 0xE007F
+	/* This is currently a TagPhobic application.. */
+	continue;
+    $elif c == 0xFEFF
+	/* U+FEFF is best seen as a null. */
+	continue;
+    $elif c == 0xFFFE || c == 0xFFFF
+	c = UCSERR;
+

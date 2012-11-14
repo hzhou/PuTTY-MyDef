@@ -1,0 +1,407 @@
+# ---- Char Out ----------------------------------------
+subcode:: on_term_init
+    $map term_decl, int wrap, int insert
+    $.wrap=1
+
+subcode:: on_term_power_on
+    $.wrap = cfg.wrap_mode
+    $.insert = 0
+
+subcode: term_do_CHAR
+    $call get_screen_line, $.curs.y, p_line
+    # -- get width ----
+    tn_width = 0
+    $if DIRECT_CHAR(c)
+	tn_width = 1
+    $else
+	tn_width = (cfg.cjk_ambig_wide ?  mk_wcwidth_cjk((wchar_t) c) : mk_wcwidth((wchar_t) c));
+
+    # -- next line ----
+    $if $.wrapnext && $.wrap && tn_width > 0 
+	$call term_out_wrap
+
+    # -- next char ----
+    $if $.insert && tn_width > 0
+	insch(term, tn_width)
+
+    $call @check_deselect_curs
+    $call @term_out_log_ascii
+
+    $if tn_width==0  
+	$call term_char_out_cc
+	continue;
+    $else
+	$if tn_width==2
+	    $call term_char_out_wide
+	$elif tn_width==1  
+	    $call term_char_out_single
+	$call term_char_out_inc_curs
+	$call seen_disp_event
+
+subcode: term_char_out_cc
+    $if $.curs.x > 0
+	tn_x = $.curs.x - 1;
+	$if $.wrapnext
+	    tn_x++
+	$if p_line->chars[tn_x].chr == UCSWIDE
+	    assert(tn_x > 0);
+	    tn_x--;
+	add_cc(p_line, tn_x, c);
+	$call seen_disp_event
+
+subcode: term_char_out_single
+    check_boundary(term, $.curs.x, $.curs.y);
+    check_boundary(term, $.curs.x+1, $.curs.y);
+    $call set_termchar, p_line, $.curs.x, c
+
+subcode: term_char_out_wide
+    check_boundary(term, $.curs.x, $.curs.y);
+    check_boundary(term, $.curs.x+2, $.curs.y);
+    $if $.curs.x == $.cols-1
+	$call erase_termchar, $.curs.x
+	$call term_out_wrap
+	p_line->lattr |= LATTR_WRAPPED2;
+	check_boundary(term, $.curs.x, $.curs.y);
+	check_boundary(term, $.curs.x+2, $.curs.y);
+    $call set_termchar, p_line, $.curs.x, c
+    $.curs.x++;
+    $call set_termchar, p_line, $.curs.x, UCSWIDE
+
+# ----
+subcode: term_char_out_inc_curs
+    $.curs.x++;
+    $if $.curs.x == $.cols
+	$.curs.x--;
+	$.wrapnext = TRUE;
+
+subcode: term_out_wrap
+    p_line->lattr |= LATTR_WRAPPED
+    $call term_do_LF_only
+    $call term_do_CR_only
+    $.wrapnext = 0
+    $call get_screen_line, $.curs.y, p_line
+
+# -------------- term actions ------------------------------------------
+subcode:: on_term_init
+    $map term_decl, char id_string[1024]
+    strcpy($.id_string, "\033[?6c");
+
+subcode: term_ans_type
+    linedisc_send($.id_string, strlen($.id_string))
+
+subcode: term_do_DA
+    $call term_ans_type
+subcode: term_do_DSR
+    $local ts_temp_buf[100]
+    $if $.pn_esc_args[0]==6
+	n=snprintf(ts_temp_buf, 100, "\033[%d;%dR", $.curs.y + 1, $.curs.x + 1)
+	linedisc_send(ts_temp_buf, n)
+    $else
+	linedisc_send("\033[0n", 4)
+
+# ---- Single Char Control --------------
+subcode: term_do_ENQ
+    $call term_ans_type
+
+subcode: term_do_S1
+    $.cset=1
+
+subcode: term_do_S0
+    $.cset=0
+
+subcode: term_do_DEL
+    $if $.curs.x && !$.wrapnext
+	$.curs.x--;
+    $.wrapnext = FALSE;
+    $if !cfg.no_dbackspace
+	check_boundary(term, $.curs.x, $.curs.y);
+	check_boundary(term, $.curs.x+1, $.curs.y);
+	$call get_screen_line, $.curs.y, p_line
+	$call erase_termchar, $.curs.x
+
+subcode: term_do_BS
+    $call seen_disp_event
+    $if $.curs.x == 0 && ($.curs.y == 0 || $.wrap == 0)
+	# /* do nothing */
+    $elif $.curs.x == 0 && $.curs.y > 0
+	$.curs.x = $.cols - 1
+	$.curs.y--;
+    $elif $.wrapnext
+	$.wrapnext = FALSE;
+    $else
+	$.curs.x--;
+
+subcode: term_do_HT
+    $call seen_disp_event
+    pos old_curs = $.curs;
+    $call get_screen_line, $.curs.y, p_line
+    $dowhile $.curs.x<$.cols-1 && !$.pc_tabs[$.curs.x]
+	$.curs.x++;
+    $if (p_line->lattr & LATTR_MODE) != LATTR_NORM
+	$if $.curs.x >= $.cols / 2
+	    $.curs.x = $.cols / 2 - 1;
+    $else
+	$if $.curs.x >= $.cols
+	    $.curs.x = $.cols - 1;
+    $call @check_deselect(old_curs, $.curs)
+
+subcode: term_do_LF_only
+    $if $.curs.y == $.marg_b
+	scroll(term, $.marg_t, $.marg_b, 1, TRUE)
+    $elif $.curs.y < $.rows - 1
+	$.curs.y++
+    $.wrapnext = FALSE;
+
+subcode: term_do_RI_only
+    $if $.curs.y == $.marg_t
+	scroll(term, $.marg_t, $.marg_b, -1, TRUE)
+    $elif $.curs.y > 0
+	$.curs.y--
+    $.wrapnext = FALSE;
+
+subcode: term_do_CR_only
+    $.curs.x = 0;
+    $.wrapnext = FALSE;
+
+subcode: term_do_CR
+    $call seen_disp_event
+    $if cfg.crhaslf
+	$call term_do_LF_only
+    $call term_do_CR_only
+    $call term_out_log_traffic
+
+subcode: term_do_LF
+    $call seen_disp_event
+    $call term_do_LF_only
+    $if cfg.lfhascr
+	$call term_do_CR_only
+    $call term_out_log_traffic
+
+subcode: term_do_FF
+    $call term_do_LF
+
+subcode: term_do_VT
+    $call term_do_LF
+
+# ---- Escape Sequence ----------------------------------------
+subcode: term_do_DECSC
+    $call save_cursor
+subcode: term_do_DECRC
+    $call seen_disp_event
+    $call restore_cursor
+subcode: term_do_IND
+    $call seen_disp_event
+    $call term_do_LF_only
+subcode: term_do_NEL
+    $call seen_disp_event
+    $call term_do_LF_only
+    $call term_do_CR_only
+subcode: term_do_RI
+    $call seen_disp_event
+    $call term_do_RI_only
+subcode: term_do_DECID
+    $call term_ans_type
+subcode: term_do_RIS
+    $call seen_disp_event
+    power_on(term, TRUE)
+
+subcode: term_do_HTS
+    $.pc_tabs[$.curs.x]=1
+subcode: term_do_TBC
+    $if $.pn_esc_args[0]==0
+	$.pc_tabs[$.curs.x]=0
+    $elif $.pn_esc_args[0]==3
+	$for i=0:$.cols
+	    $.pc_tabs[i]=0
+
+subcode: term_do_DECALN
+    # Fill screen with 'E'
+    $.erase_char.chr=CSET_ASCII | 'E'
+    $call erase_screen_2
+    $.erase_char.chr=CSET_ASCII | ' '
+    $call seen_disp_event
+
+    $local pos srctop
+    $local pos srcbot
+    srctop.x = 0
+    srctop.y = 0
+    srcbot.x = 0
+    srcbot.y = $.rows
+    $call check_deselect(srctop, srcbot)
+
+# ---- Cursor Movement ----------------------------------------
+subcode: term_do_CUU
+    $call term_ESC_default, 1
+    move_cursor(term, $.curs.x, $.curs.y - $.pn_esc_args[0], 1);
+    $call seen_disp_event
+subcode: term_do_CUD
+    $call term_ESC_default, 1
+    move_cursor(term, $.curs.x, $.curs.y + $.pn_esc_args[0], 1);
+    $call seen_disp_event
+subcode: term_do_CUF
+    $call term_ESC_default, 1
+    move_cursor(term, $.curs.x + $.pn_esc_args[0], $.curs.y, 1);
+    $call seen_disp_event
+subcode: term_do_CUB
+    $call term_ESC_default, 1
+    move_cursor(term, $.curs.x - $.pn_esc_args[0], $.curs.y, 1);
+    $call seen_disp_event
+subcode: term_do_CNL
+    $call term_ESC_default, 1
+    move_cursor(term, 0, $.curs.y + $.pn_esc_args[0], 1);
+    $call seen_disp_event
+subcode: term_do_CPL
+    $call term_ESC_default, 1
+    move_cursor(term, 0, $.curs.y - $.pn_esc_args[0], 1);
+    $call seen_disp_event
+subcode: term_do_CHA
+    $call term_ESC_default, 1
+    move_cursor(term, $.pn_esc_args[0] - 1, $.curs.y, 0);
+    $call seen_disp_event
+# ----
+subcode:: on_term_power_on
+    $call term_decl, int dec_om
+    $.dec_om = cfg.dec_om
+subcode: term_do_VPA
+    $call term_ESC_default, 1
+    move_cursor(term, $.curs.x, (($.dec_om ? $.marg_t : 0) + $.pn_esc_args[0] - 1), ($.dec_om ? 2 : 0));
+    $call seen_disp_event
+subcode: term_do_CUP
+    $call term_ESC_default_2, 1, 1
+    move_cursor(term, $.pn_esc_args[1] - 1, (($.dec_om ? $.marg_t : 0) + $.pn_esc_args[0] - 1), ($.dec_om ? 2 : 0));
+    $call seen_disp_event
+subcode: term_do_HVP
+    $call term_do_CUP
+
+subcode: term_do_ED
+    $call term_ESC_default, 0
+    n = $.pn_esc_args[0]
+    $dump(term_do_ED) n
+    $call erase_screen, n
+    $call seen_disp_event
+
+subcode: term_do_EL
+    $call term_ESC_default, 0
+    n = $.pn_esc_args[0]
+    $call erase_line, n
+    $call seen_disp_event
+
+subcode: term_do_DECSTBM
+    $call term_ESC_default_2, 1, $.rows
+    tn_top = $.pn_esc_args[0] - 1;
+    tn_bot = $.pn_esc_args[1] - 1;
+    $if tn_bot >= $.rows
+	tn_bot = $.rows - 1;
+    $if tn_bot - tn_top > 0
+	$.marg_t = tn_top
+	$.marg_b = tn_bot
+	$.curs.x = 0
+	$.curs.y = tn_top
+	$call seen_disp_event
+
+# ---- Mode -----------------------------------
+subcode: term_decl_0(var)
+    $struct(tagTerminal) $(var)
+    $(this)$(var) = 0
+
+subcode:: on_term_init
+    $map term_decl_0 b_insert, b_echo, b_crlf, b_big_cursor
+    $map term_decl_0 b_app_cursor_keys, b_rvideo, b_cursor_on
+
+subcode:: function_list
+    $list term_app_cursor_keys
+
+fncode: term_app_cursor_keys(Terminal *term)
+    return $.b_app_cursor_keys
+
+# ---- ----
+subcode: term_do_MODE_HIGH_0
+    $call term_do_toggle, 0, 1, 0
+subcode: term_do_MODE_LOW_0
+    $call term_do_toggle, 0, 0, 1
+subcode: term_do_MODE_HIGH_1
+    $call term_do_toggle, 1, 1, 0
+subcode: term_do_MODE_LOW_1
+    $call term_do_toggle, 1, 0, 1
+
+subcode: term_do_toggle(query, state0, state1)
+    $(set:arg=$(this)pn_esc_args[i])
+    $for i=0:$.n_esc_args
+	tn_arg=$(arg)
+	$call term_do_toggle_$(query)
+
+subcode: term_do_toggle_0
+    $if $(arg)==4
+	$.b_insert=$(state0)
+    $elif $(arg)==12
+	$.b_echo=$(state1)
+    $elif $(arg)==20
+	$.b_crlf=$(state0)
+    $elif $(arg)==34
+	$.b_big_cursor=$(state1)
+
+subcode: term_do_toggle_1
+    $if $(arg)==1
+	$.b_app_cursor_keys=$(state0)
+    $elif $(arg)==5
+	$.b_rvideo=$(state0)
+    $elif $(arg)==12
+	# blink cursor
+    $elif $(arg)==25
+	$.b_cursor_on=$(state0)
+    $elif $(arg)==47
+	# alt screen
+    $elif $(arg)==1049
+	# save cursor and alt_screen
+# ------------------------------------------------------------------------
+subcode: term_do_SGR
+    $if $.n_esc_args==0
+	$.n_esc_args=1
+    $for i = 0:$.n_esc_args
+	n=$.pn_esc_args[i]
+	$if n>=30 && n<38
+	    $call set_attr_fg, $.curr_attr, n-30
+	$elif n==39
+	    $call set_attr_fg, $.curr_attr, COLOR_DEFFG
+	$elif n>=40 && n<48
+	    $call set_attr_bg, $.curr_attr, n-40
+	$elif n==49
+	    $call set_attr_bg, $.curr_attr, COLOR_DEFBG
+	$elif n==38 || n==48
+	    $if $.n_esc_args>2
+		$call set_color_256
+	    i=$.n_esc_args
+	$call switch_m_reset, 0
+	$call switch_m_enable, 1, BOLD
+	$call switch_m_enable, 4, UNDER
+	$call switch_m_enable, 5, BLINK
+	$call switch_m_enable, 7, REVERSE
+	$call switch_m_disable, 22, BOLD
+	$call switch_m_disable, 24, UNDER
+	$call switch_m_disable, 25, BLINK
+	$call switch_m_disable, 27, REVERSE
+    $call @on_term_curr_attr
+# ----
+subcode: switch_m_reset(n)
+    $elif n==$(n)
+	$.curr_attr = $.default_attr
+subcode: switch_m_enable(n, attr)
+    $elif n==$(n)
+	$.curr_attr |= ATTR_$(attr)
+subcode: switch_m_disable(n, attr)
+    $elif n==$(n)
+	$.curr_attr &= ~ATTR_$(attr)
+# ----
+subcode: set_color_256
+    $if $.pn_esc_args[i+1]==5
+	$if n==38
+	    $call set_attr_fg, $.curr_attr, $.pn_esc_args[i+2] & 0xFF
+	$else
+	    $call set_attr_bg, $.curr_attr, $.pn_esc_args[i+2] & 0xFF
+    $elif $.pn_esc_args[i+1]==2 && $.n_esc_args>5
+	$call match_color_216, $.pn_esc_args[i+2]&0xff, $.pn_esc_args[i+3]&0xff, $.pn_esc_args[i+4]&0xff, tn_color_idx
+	$if n==38
+	    $call set_attr_fg, $.curr_attr, tn_color_idx
+	$else
+	    $call set_attr_bg, $.curr_attr, tn_color_idx
+# ----

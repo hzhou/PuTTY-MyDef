@@ -1,0 +1,194 @@
+subcode:: function_list
+    $global HMENU popup_menus[2]
+    $enumbase(MENU, 0) SYS, CTX
+
+# --------------------------------
+subcode:: WinMain_PreShow
+    $call init_system_menu
+
+subcode: main_on_WM_INITMENUPOPUP
+    $if (HMENU)wparam == menu_savedsess
+	# refresh session list
+	$call update_savedsess_menu
+	return 0;
+    break;
+
+# -----------------------------------
+subcode:: function_list
+    $global struct sesslist sesslist
+    $global HMENU menu_savedsess
+
+subcode: init_system_menu
+    popup_menus[MENU_SYS] = GetSystemMenu(hwnd, FALSE);
+    popup_menus[MENU_CTX] = CreatePopupMenu();
+    AppendMenu(popup_menus[MENU_CTX], MF_ENABLED, IDM_PASTE, "&Paste");
+
+    menu_savedsess = CreateMenu();
+    $call init_sesslist
+    $for j=0:lenof(popup_menus)
+	$local HMENU menu_temp
+	menu_temp = popup_menus[j]
+	$call AppendMenu, menu_temp, menu_main
+
+subcode: menu_del_restart
+    # remove Restart Session menu item
+    $for i=0:lenof(popup_menus)
+	DeleteMenu(popup_menus[i], IDM_RESTART, MF_BYCOMMAND);
+
+subcode: menu_add_restart
+    $for i=0:lenof(popup_menus)
+	DeleteMenu(popup_menus[i], IDM_RESTART, MF_BYCOMMAND);
+	InsertMenu(popup_menus[i], IDM_DUPSESS, MF_BYCOMMAND | MF_ENABLED, IDM_RESTART, "&Restart Session");
+
+subcode: menu_check(name)
+    $for i=0:lenof(popup_menus)
+	CheckMenuItem(popup_menus[i], $(name), MF_CHECKED);
+
+subcode: menu_uncheck(name)
+    $for i=0:lenof(popup_menus)
+	CheckMenuItem(popup_menus[i], $(name), MF_UNCHECKED);
+
+subcode: ctxmenu_delete(name)
+    DeleteMenu(popup_menus[MENU_CTX], $(name), MF_BYCOMMAND);
+
+subcode: ctxmenu_append(name, type, text)
+    InsertMenu(popup_menus[MENU_CTX], -1, MF_BYPOSITION | $(type), $(name), $(text));
+
+
+# ---- Session List -----------------------------------------
+subcode: init_sesslist
+    sesslist.buffer = NULL;
+    sesslist.sessions = NULL;
+
+subcode: get_sesslist
+    $if sesslist.buffer
+	sfree(sesslist.buffer);
+	sfree(sesslist.sessions);
+	$call init_sesslist
+    $else
+	get_sesslist(&sesslist, TRUE, cfg.session_storagetype);
+	
+subcode: update_savedsess_menu
+    $call get_sesslist
+    $whiletrue DeleteMenu(menu_savedsess, 0, MF_BYPOSITION)
+    tn_count=sesslist.nsessions
+    $if tn_count>1
+	$if tn_count>IDM_SAVED_COUNT+1
+	    tn_count=IDM_SAVED_COUNT+1
+	# skip sesslist.sessions[0] == Default Settings 
+	$for i=1:tn_count
+	    AppendMenu(menu_savedsess, MF_ENABLED, IDM_SAVED_MIN+(i-1)*IDM_SAVED_STEP, sesslist.sessions[i]);
+    $else
+	AppendMenu(menu_savedsess, MF_GRAYED, IDM_SAVED_MIN, "(No sessions)");
+
+# ---- Special Commands ----------------------------------------
+subcode:: function_list
+    $global const struct telnet_special * specials = NULL
+    $global HMENU menu_specials = NULL, n_specials=0
+    $list update_specials_menu
+
+subcode: build_specials_menu
+    tn_nesting=1
+    $local i
+    $for i=0;tn_nesting>0;i++
+	assert(IDM_SPECIAL_MIN+IDM_SPECIAL_STEP*i<IDM_SPECIAL_MAX);
+	$switch specials[i].code
+	  case TS_SEP:
+	    AppendMenu(new_menu, MF_SEPARATOR, 0, 0);
+	    break;
+	  case TS_SUBMENU:
+	    assert(tn_nesting < 2)
+	    tn_nesting++;
+	    saved_menu = new_menu
+	    new_menu = CreatePopupMenu();
+	    AppendMenu(saved_menu, MF_POPUP|MF_ENABLED, (UINT) new_menu, specials[i].name);
+	    break;
+	  case TS_EXITMENU:
+	    tn_nesting--
+	    $if tn_nesting
+		new_menu = saved_menu
+		saved_menu = NULL;
+	    break;
+	  default:
+	    AppendMenu(new_menu, MF_ENABLED, IDM_SPECIAL_MIN+i*IDM_SPECIAL_STEP, specials[i].name);
+	    break;
+    n_specials = i - 1;
+
+fncode: update_specials_menu(void * frontend)
+    $if back
+	specials = back->get_specials(backhandle);
+    $else
+	specials = NULL;
+
+    $if specials
+	HMENU saved_menu = NULL;
+	HMENU new_menu = CreatePopupMenu();
+	$call build_specials_menu
+    $else
+	new_menu = NULL;
+	n_specials = 0;
+
+    $for i=0:lenof(popup_menus)
+	$if menu_specials
+	    DeleteMenu(popup_menus[i], (UINT)menu_specials, MF_BYCOMMAND);
+	    DeleteMenu(popup_menus[i], IDM_SPECIALSEP, MF_BYCOMMAND);
+	$if new_menu
+	    InsertMenu(popup_menus[i], IDM_SHOWLOG, MF_BYCOMMAND | MF_POPUP | MF_ENABLED, (UINT) new_menu, "S&pecial Command");
+	    InsertMenu(popup_menus[i], IDM_SHOWLOG, MF_BYCOMMAND | MF_SEPARATOR, IDM_SPECIALSEP, 0);
+    menu_specials = new_menu;
+
+# ###################################################################
+subcode:: global
+    $write_res_h menu_main
+
+resource: menu_main
+    IDM_PASTE
+	disable: 1
+	text: &Paste
+    IDM_SPECIALSEP
+	disable: 1
+    MENU
+	disable: 1
+	text: Special Command
+	reserve: IDM_SPECIAL - 40
+    ----
+    IDM_SHOWLOG
+	text: &Event Log
+    ----
+    IDM_NEWSESS
+	text: Ne&w Session
+    IDM_DUPSESS
+	text: &Duplicate Session
+    IDM_RESTART
+	text: &Restart Session
+    MENU
+	var: menu_savedsess
+	text: Sa&ved Sessions
+	reserve: IDM_SAVED - 16
+    IDM_RECONF 
+	text: Chan&ge Settings...
+    ----
+    IDM_COPYALL
+	text: C&opy All to Clipboard
+    IDM_CLRSB  
+	text: C&lear Scrollback
+    IDM_RESET  
+	text: Rese&t Terminal
+    ----
+    IDM_FULLSCREEN
+	text: &Full Screen
+    IDM_VISIBLE
+	text: Alwa&ys on top
+    IDM_HELP
+	text: &Help
+    ----
+    IDM_ABOUT
+	text: &About $appname
+    IDM_TRAYSEP
+	disable: 1
+    IDM_TRAYCLOSE
+	disable: 1
+    IDM_TRAYRESTORE
+	disable: 1
+
+

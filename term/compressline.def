@@ -1,0 +1,198 @@
+subcode:: function_list
+    $list compressline, decompressline
+
+# ---- Simple dynamic buffer -----------------------
+subcode: buf_init
+    tn_buf_pos=0
+    tn_buf_size=0
+    pc_buf_data=NULL
+
+subcode: buf_check_size
+    $if tn_buf_pos >= tn_buf_size
+	tn_buf_size = (tn_buf_pos*3/2)+512
+	pc_buf_data=realloc(pc_buf_data, tn_buf_size)
+
+subcode: buf_expand_size(n)
+    $if tn_buf_pos+$(n) >= tn_buf_size
+	tn_buf_size = tn_buf_pos+$(n)
+	pc_buf_data=realloc(pc_buf_data, tn_buf_size)
+
+subcode: buf_add(c)
+    $call buf_check_size
+    pc_buf_data[tn_buf_pos++]=(unsigned char)($(c))
+
+subcode: buf_add_int(n)
+    n=$(n)
+    $while n >= 128
+	$call buf_add, (n & 0x7F)|0x80
+	n >>= 7
+    $call buf_add, n
+
+# ----
+subcode: buf_read_init(buf)
+    tn_buf_pos=0
+    pc_buf_data=$(buf)
+
+subcode: buf_get(c)
+    $(c)=pc_buf_data[tn_buf_pos++]
+
+subcode: buf_get_int(n)
+    n=0
+    $call buf_get, tn_c
+    $while tn_c & 0x80
+	n+=tn_c&0x7f
+	n<<=7
+	$call buf_get, tn_c
+    $(n)=n+(tn_c&0x7f)
+
+# ---- RunLength Compression -----------------------
+subcode: buf_rle_start
+    $enumbase(RLE) NoMatch, Match, Run
+    tn_rle_head=tn_buf_pos
+    $call buf_add, 0
+    tn_rle_state=RLE_NoMatch
+    tn_prev=0x1ff
+
+subcode: buf_rle_add_nomatch(c)
+    $if pc_buf_data[tn_rle_head]<127
+	pc_buf_data[tn_rle_head]++
+	$call buf_add, $(c)
+	tn_prev=$(c)
+    $else
+	$call buf_rle_restart, $(c)
+
+subcode: buf_rle_add_match
+    $if pc_buf_data[tn_rle_head]<255
+	pc_buf_data[tn_rle_head]++
+    $else
+	$call buf_rle_restart, pc_buf_data[tn_rle_head+1]
+
+subcode: buf_rle_restart(c)
+    tn_prev=$(c)
+    tn_rle_head=tn_buf_pos
+    $call buf_add, 1
+    $call buf_add, tn_prev
+    tn_rle_state=RLE_NoMatch
+
+subcode: buf_rle_start_run
+    pc_buf_data[tn_rle_head]-=2
+    $if pc_buf_data[tn_rle_head]>0
+	tn_rle_head=tn_buf_pos-2
+    $else
+	tn_rle_head=tn_buf_pos-3
+	tn_buf_pos--
+    pc_buf_data[tn_rle_head]=3|0x80
+    tn_rle_state=RLE_Run
+
+subcode: buf_rle_push(c)
+    $if $(c)==tn_prev
+	$if tn_rle_state==RLE_NoMatch
+	    $call buf_rle_add_nomatch, $(c)
+	    tn_rle_state=RLE_Match
+	$elif tn_rle_state==RLE_Match
+	    $call buf_rle_start_run
+	$else
+	    $call buf_rle_add_match
+    $else
+	$if tn_rle_state==RLE_NoMatch
+	    $call buf_rle_add_nomatch, $(c)
+	$elif tn_rle_state==RLE_Match
+	    tn_rle_state=RLE_NoMatch
+	    $call buf_rle_add_nomatch, $(c)
+	$else
+	    $call buf_rle_restart, $(c)
+
+# ----
+subcode: buf_rle_read_init
+    tn_rle_count=pc_buf_data[tn_buf_pos]
+    tn_buf_pos++
+
+subcode: buf_rle_read(c)
+    $if (tn_rle_count & 0x7f)>0
+	$if tn_rle_count & 0x80
+	    $(c)=pc_buf_data[tn_buf_pos]
+	$else
+	    $(c)=pc_buf_data[tn_buf_pos]
+	    tn_buf_pos++
+	tn_rle_count--
+    $if (tn_rle_count & 0x7f)==0
+	$if tn_rle_count & 0x80
+	    tn_buf_pos++
+	tn_rle_count=pc_buf_data[tn_buf_pos]
+	tn_buf_pos++
+
+# ============================================================
+subcode: clear_pchar_free
+    p_chars[tn_free].chr=0
+    p_chars[tn_free].attr=0
+
+fncode: compressline(termline *p_line)
+    $return_type void *
+    $local termchar *p_chars
+    p_chars=p_line->chars
+
+    $if p_line->cc_free
+	tn_free=p_line->cc_free
+	$while tn_free
+	    $call clear_pchar_free
+	    $if p_chars[tn_free].cc_next
+		tn_free+=p_chars[tn_free].cc_next
+	    $else
+		break
+
+    $call buf_init
+    $call buf_add_int, p_line->cols
+    $call buf_add_int, p_line->lattr
+    $call buf_add_int, p_line->size
+    $call buf_add_int, p_line->cc_free
+    $call buf_rle_start
+    $for j=0:sizeof(termchar)
+	$for i=0:p_line->size
+	    pc_temp=(unsigned char *)(p_line->chars+i)
+	    $call buf_rle_push, pc_temp[j]
+    pc_line=realloc(pc_buf_data, tn_buf_pos+1)
+    return pc_line
+
+fncode: decompressline(void * buf)
+    $return_type termline *
+    pc_line=buf
+
+    $call buf_read_init, buf
+    $local termline *p_line
+    p_line = snew(termline);
+    $call buf_get_int, p_line->cols
+    $call buf_get_int, p_line->lattr
+    $call buf_get_int, p_line->size
+    $call buf_get_int, p_line->cc_free
+    p_line->chars=snewn(p_line->size, termchar)
+    $local termchar *p_chars
+    p_chars=p_line->chars
+    $call buf_rle_read_init
+    $for j=0:sizeof(termchar)
+	$for i=0:p_line->size
+	    pc_temp=(unsigned char *)(p_line->chars+i)
+	    $call buf_rle_read, pc_temp[j]
+    return p_line
+
+# ============================================================
+subcode: debug_p_line
+    $local termchar *p_chars
+    p_chars=p_line->chars
+    $dump(debug) p_line->cols, p_line->size
+    $for i=0:p_line->cols
+	printf("%d - %08x - %08x - %d ", i, p_chars[i].chr, p_chars[i].attr, p_chars[i].cc_next)
+	$if i % 2 ==1
+	    printf("\n")
+
+subcode: debug_c_line(l)
+    $for tn_i=0:40
+	printf("(%d:%2x)", tn_i, (unsigned char)$(l)[tn_i])
+    printf("\n")
+
+subcode:: function_list
+    $list term_debug_screen
+
+fncode: term_debug_screen(Terminal *term)
+    p_line=lineptr(term, 0)
+    $call debug_p_line
+

@@ -1,0 +1,261 @@
+# ---- frontend functions ---------------------------------------
+subcode:: function_list
+    $list do_beep
+    $list set_title, set_icon, front_set_scrollbar
+    $list paint_start, paint_finish
+
+fncode: set_title(void *frontend, ts_title)
+    sfree(window_name);
+    window_name = snewn(1 + strlen(ts_title), char);
+    strcpy(window_name, ts_title);
+    if (cfg.win_name_always || !IsIconic(hwnd))
+	SetWindowText(hwnd, ts_title);
+    $call @Update_Window_Title
+
+fncode: set_icon(void *frontend, ts_title)
+    sfree(icon_name);
+    icon_name = snewn(1 + strlen(ts_title), char);
+    strcpy(icon_name, ts_title);
+    if (!cfg.win_name_always && IsIconic(hwnd))
+	SetWindowText(hwnd, ts_title);
+
+fncode: front_set_scrollbar(tn_total, tn_pos, tn_pagesize)
+    $local SCROLLINFO si
+
+    $if is_full_screen() ? !cfg.scrollbar_in_fullscreen : !cfg.scrollbar
+	return;
+
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+    si.nMin = 0;
+    si.nMax = tn_total - 1
+    si.nPage = tn_pagesize
+    si.nPos = tn_pos
+    $if hwnd
+	SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+
+# ----
+fncode: paint_start
+    $global HDC cur_hdc=0
+    $if hwnd
+	cur_hdc=GetDC(hwnd)
+	return 1
+    $else
+	cur_hdc=0
+	return 0
+
+fncode: paint_finish
+    $if cur_hdc
+	ReleaseDC(hwnd, cur_hdc);
+
+# ----
+subcode: default_beep
+    n_beepdiff = GetTickCount() - n_lastbeep;
+    $if n_beepdiff >= 0 && n_beepdiff < 50
+	return;
+    BLOCK
+    n_lastbeep = GetTickCount();
+
+fncode: do_beep
+    tn_mode=cfg.beep
+    $local static long n_lastbeep=0
+    $local long n_beepdiff
+    $if tn_mode == BELL_DEFAULT
+	&call default_beep
+	    MessageBeep(MB_OK);
+    $elif tn_mode == BELL_PCSPEAKER
+	&call default_beep
+	    $if osVersion.dwPlatformId == VER_PLATFORM_WIN32_NT
+		Beep(800, 100);
+	    $else
+		MessageBeep(-1);
+    $elif tn_mode == BELL_WAVEFILE
+	$if !PlaySound(cfg.bell_wavefile.path, NULL, SND_ASYNC | SND_FILENAME)
+	    $local char buf[sizeof(cfg.bell_wavefile.path) + 80];
+	    sprintf(buf, "Unable to play sound file\n%s\n" "Using default sound instead", cfg.bell_wavefile.path);
+	    $tempstr "$appname Sound Error"
+	    MessageBox(hwnd, buf, ts_temp_buf, MB_OK | MB_ICONEXCLAMATION);
+	    cfg.beep = BELL_DEFAULT;
+    $else
+	$if b_has_focus
+	    flash_window(2)
+
+#--------------------------------------------------------------
+subcode:: function_list
+    $global n_time_nextflash, n_is_flashing
+    $list on_timer_flash_window, flash_window
+
+fncode: on_timer_flash_window(void * ctx, long n_now)
+    $if n_is_flashing && n_now - n_time_nextflash >= 0
+	flash_window(1);
+
+fncode: flash_window(int mode)
+    # mode: 0 = stop, 1 = maintain, 2 = start
+    $if mode==0 || cfg.beep_ind==B_IND_DISABLED
+	# stop
+	$if n_is_flashing
+	    FlashWindow(hwnd, FALSE);
+	    n_is_flashing = 0;
+	    $call tray_flash_stop
+    $elif mode == 2
+	# start
+	$if !n_is_flashing
+	    n_is_flashing = 1;
+	    puttyTrayFlashIcon = puttyTray.hIcon;
+	    FlashWindow(hwnd, TRUE);
+	    n_time_nextflash = schedule_timer(450, on_timer_flash_window, hwnd);
+	    $call tray_flash_start
+    $elif mode == 1 && cfg.beep_ind == B_IND_FLASH
+	# maintain
+	$if n_is_flashing
+	    FlashWindow(hwnd, TRUE);
+	    n_time_nextflash = schedule_timer(450, on_timer_flash_window, hwnd);
+	    $call tray_flash
+
+/*
+subcode:: function_list
+    DECL_WINDOWS_FUNCTION(static, BOOL, FlashWindowEx, (PFLASHWINFO));
+    $(block:main_init)
+	$call dll_init_flashwindow
+
+subcode: dll_init_flashwindow
+    $local HMODULE user32_module = load_system32_dll("user32.dll");
+    GET_WINDOWS_FUNCTION(user32_module, FlashWindowEx);
+
+static BOOL flash_window_ex(DWORD dwFlags, UINT uCount, DWORD dwTimeout)
+{
+    if (p_FlashWindowEx) {
+	FLASHWINFO fi;
+	fi.cbSize = sizeof(fi);
+	fi.hwnd = hwnd;
+	fi.dwFlags = dwFlags;
+	fi.uCount = uCount;
+	fi.dwTimeout = dwTimeout;
+	return (*p_FlashWindowEx)(&fi);
+    }
+    else
+	return FALSE; 
+}
+*/
+
+# ----------------------------------
+subcode: function_list
+    $global int caret_x, int caret_y
+    $list sys_cursor, sys_cursor_update
+
+subcode: sys_cursor_skip
+    $if b_has_focus
+	return
+
+fncode: sys_cursor(void * frontend, int x, int y)
+    $call sys_cursor_skip
+    tn_cx=x*font_width+offset_width
+    tn_cy=y*font_height+offset_height
+    $if tn_cx!=caret_x || tn_cy!=caret_y
+	sys_cursor_update()
+
+fncode: sys_cursor_update
+    $local COMPOSITIONFORM cf
+    $local HIMC hIMC
+
+    $call sys_cursor_skip
+
+    if (caret_x < 0 || caret_y < 0)
+	return;
+
+    SetCaretPos(caret_x, caret_y);
+
+    /* IMM calls on Win98 and beyond only */
+    if(osVersion.dwPlatformId == VER_PLATFORM_WIN32s) return; /* 3.11 */
+    
+    if(osVersion.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS && osVersion.dwMinorVersion == 0) return; /* 95 */
+
+    /* we should have the IMM functions */
+    hIMC = ImmGetContext(hwnd);
+    cf.dwStyle = CFS_POINT;
+    cf.ptCurrentPos.x = caret_x;
+    cf.ptCurrentPos.y = caret_y;
+    ImmSetCompositionWindow(hIMC, &cf);
+
+    ImmReleaseContext(hwnd, hIMC);
+
+#---- Always on top ----------------------------------------------------------
+subcode: on_IDM_VISIBLE
+    $local HMENU hmenu_temp
+    hmenu_temp=GetSystemMenu(hwnd, FALSE)
+    $if hmenu_temp
+	tn_state = GetMenuState(hmenu_temp, (UINT)IDM_VISIBLE, MF_BYCOMMAND); 
+	$if !(tn_state & MF_CHECKED)
+	    CheckMenuItem(hmenu_temp, (UINT)IDM_VISIBLE, MF_BYCOMMAND|MF_CHECKED);
+	    SetWindowPos(hwnd, (HWND)-1, 0, 0, 0, 0, SWP_NOMOVE |SWP_NOSIZE);
+	$else
+	    CheckMenuItem(hmenu_temp, (UINT)IDM_VISIBLE, MF_BYCOMMAND|MF_UNCHECKED);
+	    SetWindowPos(hwnd, (HWND)-2, 0, 0, 0, 0, SWP_NOMOVE |SWP_NOSIZE);
+
+#---- Transparency ----------------------------------------------------------
+subcode:: function_list
+    $list MakeWindowTransparent
+
+fncode: MakeWindowTransparent(HWND hWnd, n_alpha)
+    $typedef DWORD (WINAPI *PSLWA)(HWND, DWORD, BYTE, DWORD)
+    $define(WS_EX_LAYERED) 0x00080000
+    $define(LWA_ALPHA) 0x00000002
+    #$define(LWA_COLORKEY) 0x00000001
+    $local static b_transparency_initialized=0
+    $local static PSLWA fn_SetLayeredWindowAttributes=NULL
+    $if !b_transparency_initialized
+	HMODULE hDLL = LoadLibrary("user32");
+	fn_SetLayeredWindowAttributes = (PSLWA) GetProcAddress(hDLL, "SetLayeredWindowAttributes");
+	b_transparency_initialized = TRUE;
+    $if fn_SetLayeredWindowAttributes == NULL
+	    return 0;
+
+    $if n_alpha<0
+	return 0
+    $elif n_alpha>255
+	n_alpha=255
+
+    tn_exstyle=GetWindowLong(hWnd, GWL_EXSTYLE)
+    $if n_alpha < 255
+	SetLastError(0);
+	SetWindowLong(hWnd, GWL_EXSTYLE, tn_exstyle | WS_EX_LAYERED);
+	$if GetLastError()
+	    return 0;
+	return fn_SetLayeredWindowAttributes(hWnd, RGB(255,255,255), n_alpha, LWA_ALPHA);
+    $else
+	SetWindowLong(hWnd, GWL_EXSTYLE, tn_exstyle & ~WS_EX_LAYERED);
+	return 1
+
+#---- Reconnect ----------------------------------------------------
+subcode:: function_list
+    $register_prefix(time) time_t
+    $global time_last_reconnect=0
+
+subcode: session_reconnect
+    $if session_closed && !back
+	time_now = time(NULL);
+	
+	$if time_last_reconnect && (time_now - time_last_reconnect) < 5
+		Sleep(1000);
+
+	time_last_reconnect = time_now;
+	logevent(NULL, "Woken up from suspend, reconnecting...");
+	term_pwron(term, FALSE);
+	start_backend();
+
+subcode: main_on_WM_POWERBROADCAST:
+    $if cfg.wakeup_reconnect
+	$switch wparam
+	    case PBT_APMRESUMESUSPEND:
+	    case PBT_APMRESUMEAUTOMATIC:
+	    case PBT_APMRESUMECRITICAL:
+	    case PBT_APMQUERYSUSPENDFAILED:
+		$call session_reconnect
+		break;
+	    case PBT_APMSUSPEND:
+		$if !session_closed && back
+		    logevent(NULL, "Suspend detected, disconnecting cleanly...");
+		    close_session();
+		break;
+    break;
+

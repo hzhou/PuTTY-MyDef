@@ -1,0 +1,84 @@
+subcode: term_out_start_OSC
+    $.n_termstate = termstate_SEEN_OSC;
+    $.n_state_2=0
+    $.pn_esc_args[0] = 0
+    $.pn_esc_args[1] = 0
+
+    $define(OSC_STR_MAX) 100
+    $map term_decl n_osc_strlen, wchar_t s_osc_str[OSC_STR_MAX]
+    $.n_osc_strlen=0
+
+subcode: term_out_SEEN_OSC
+    $if $.n_state_2==0
+	$if isdigit(c)
+	    $.pn_esc_args[0] = 10 * $.pn_esc_args[0] + c - '0'
+	$elif c=='P'
+	    # Linux palette sequence
+	    $.n_state_2='P'
+	$elif c=='R'
+	    # Linux palette reset
+	    $.n_termstate=termstate_TOPLEVEL
+	$elif c=='W'
+	    # word set
+	    $.pn_esc_args[1]='W'
+	$elif c==';'
+	    $.n_state_2=1
+	$else
+	    $.n_termstate=termstate_TOPLEVEL
+    $elif $.n_state_2==1
+	$if c=='\012' || c=='\015'
+	    $.n_termstate=termstate_TOPLEVEL
+	$elif c==0234 || c=='\007'
+	    $.n_termstate=termstate_TOPLEVEL
+	    # $call term_out_do_OSC
+	$elif c>=' '
+	    $if $.n_osc_strlen<OSC_STR_MAX
+		$.s_osc_str[$.n_osc_strlen++]=(wchar_t)c
+	$else
+	    $.n_termstate=termstate_TOPLEVEL
+    $elif $.n_state_2=='P'
+	$call term_out_OSC_P
+
+subcode: term_out_OSC_P
+    $local unsigned int tn_max
+    tn_max = ($.n_osc_strlen == 0 ? 21 : 15)
+    $if c>='0' && c<='9'
+	tn_val = c - '0';
+    $elif c>='A' && c <= 'A' + tn_max - 10
+	tn_val = c - 'A' + 10
+    $elif c>='a' && c <= 'a' + tn_max - 10
+	tn_val = c - 'a' + 10
+    $else
+	$.n_termstate=termstate_TOPLEVEL
+
+    $if $.n_termstate != termstate_TOPLEVEL
+	$.s_osc_str[$.n_osc_strlen++]=tn_val
+	$if $.n_osc_strlen >= 7
+	    tn_a0=$.s_osc_str[0]
+	    tn_a1=$.s_osc_str[1]*16+$.s_osc_str[2]
+	    tn_a2=$.s_osc_str[2]*16+$.s_osc_str[4]
+	    tn_a3=$.s_osc_str[3]*16+$.s_osc_str[6]
+	    # palette_set(NULL, tn_a0, tn_a1, tn_a2, tn_a3)
+	    term_invalidate(term);
+	    $.n_termstate=termstate_TOPLEVEL
+
+subcode: term_out_do_OSC
+    $if $.pn_esc_args[1]=='W'
+	while (term->osc_strlen--)
+	$while $.n_osc_strlen--
+	    tn_a0=(unsigned char)$.s_osc_str[$.n_osc_strlen]
+	    # term->wordness[tn_a0] = pn_esc_args[0]
+    $else
+	$.s_osc_str[$.n_osc_strlen]=0
+	$switch $.pn_esc_args[0]
+	    case 0:
+		$call set_icon_name
+		$call set_window_name
+		break
+	    case 1:
+		$call set_icon_name
+		break
+	    case 2:
+		$call set_window_name
+		break
+

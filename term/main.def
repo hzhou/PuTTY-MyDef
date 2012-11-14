@@ -1,0 +1,128 @@
+subcode:: global
+    $include tree234.h
+    $struct(pos) int x, int y
+    $struct(termchar) unsigned long chr, unsigned long attr, int cc_next
+    $struct(termline) unsigned short lattr, int cols, int size, int cc_free, struct termchar *chars
+    $typedef struct pos pos
+    $typedef struct termchar termchar
+    $typedef struct termline termline
+    $typedef struct tagTerminal Terminal
+    $global Terminal g_term
+
+subcode:: function_list
+    $map term_decl, int cols, int rows, tree234 *screen
+    $list term_init, term_free, power_on
+
+fncode: term_init(Config * mycfg)
+    $return_type Terminal *
+    $local Terminal * term
+    term = &g_term
+    $.rows=-1
+    $.cols=-1
+    $.screen = NULL
+    $call @on_term_init
+    power_on(term, TRUE);
+    return term
+
+subcode: term_free(Terminal *term)
+    $call @on_term_finish
+    expire_timer_context(term);
+
+fncode: power_on(Terminal *term, tb_clear)
+    $call @on_term_power_on
+
+# ----------------------------------------------------
+# ###############################################################
+subcode:: function_list
+    $list term_size
+
+subcode: screen_init
+    $.screen=newtree234(NULL)
+    $.rows=0
+
+fncode: term_size(Terminal *term, n_row, n_col)
+    $if n_row == $.rows && n_col == $.cols
+	return
+
+    $if $.rows == -1
+	$call screen_init
+
+    $if n_row < 1 
+	n_row = 1
+    $if n_col < 1 
+	n_col = 1
+
+    $call @on_term_size_before
+
+    tn_row_old=$.rows
+    tn_col_old=$.cols
+
+    tn_cursor_adjust=0
+    # -- enlarge --
+    $while $.rows < n_row
+	$if $.n_scrollback_count > 0
+	    $call term_size_insert_scrollback
+	$else
+	    $call term_size_add_blank
+    # -- shrink --
+    $while $.rows > n_row
+	$if $.curs.y < $.rows - 1
+	    $call term_size_del_blank
+	$else
+	    $call term_size_push_scrollback
+    $.rows = n_row;
+    $.cols = n_col;
+    $call @on_term_size_after
+    $call update_sbar
+    term_update(term);
+
+# --------
+subcode: term_size_insert_scrollback
+    $call scrollback_pop, p_line
+    addpos234($.screen, p_line, 0);
+    $.rows ++
+    tn_cursor_adjust++
+
+subcode: term_size_push_scrollback
+    p_line = delpos234($.screen, 0);
+    $call scrollback_push, p_line
+    $call freeline, p_line
+    $.rows --
+    tn_cursor_adjust--
+
+# ----
+subcode: term_size_add_blank
+    p_line = newline(term, n_col, FALSE);
+    addpos234($.screen, p_line, count234($.screen));
+    $.rows ++
+
+subcode: term_size_del_blank
+    p_line =delpos234($.screen, $.rows-1);
+    sfree(p_line);
+    $.rows --
+
+# ----
+subcode:: on_term_init
+    $map term_decl, pc_tabs
+    $.pc_tabs=NULL
+
+subcode:: on_term_power_on
+    $if $.cols >0
+	$for i=0:$.cols
+	    $.pc_tabs[i] = (i % 8 == 0 ? 1 : 0)
+
+subcode: on_term_size_after
+    $.pc_tabs=realloc($.pc_tabs, $.cols)
+    $if tn_col_old<0
+	tn_col_old=0
+    $for i=tn_col_old:$.cols
+	$.pc_tabs[i] = (i % 8 == 0 ? 1 : 0);
+
+# ##################################################
+subcode:: function_list
+    $list term_pwron
+
+fncode: term_pwron(Terminal *term, tb_clear)
+    power_on(term, tb_clear);
+    term_update(term);
+

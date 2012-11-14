@@ -1,0 +1,56 @@
+##########################################################################
+/*
+subcode:: function_list
+    $define WM_MOUSEWHEEL 0x020A
+    $define WHEEL_DELTA 120
+    $global UINT wm_mousewheel = WM_MOUSEWHEEL
+    $global wheel_accumulator=0
+
+subcode: main_on_defaut
+    $if msg == wm_mousewheel || msg == WM_MOUSEWHEEL
+	    int shift_pressed=0, control_pressed=0;
+
+	    if (message == WM_MOUSEWHEEL) {
+		wheel_accumulator += (short)HIWORD(wParam);
+		shift_pressed=LOWORD(wParam) & MK_SHIFT;
+		control_pressed=LOWORD(wParam) & MK_CONTROL;
+	    } else {
+		BYTE keys[256];
+		wheel_accumulator += (int)wParam;
+		if (GetKeyboardState(keys)!=0) {
+		    shift_pressed=keys[VK_SHIFT]&0x80;
+		    control_pressed=keys[VK_CONTROL]&0x80;
+		}
+	    }
+
+	    while (abs(wheel_accumulator) >= WHEEL_DELTA) {
+		int b;
+
+		if (wheel_accumulator > 0) {
+		    b = MBT_WHEEL_UP;
+		    wheel_accumulator -= WHEEL_DELTA;
+		} else if (wheel_accumulator < 0) {
+		    b = MBT_WHEEL_DOWN;
+		    wheel_accumulator += WHEEL_DELTA;
+		} else
+		    break;
+
+		if (send_raw_mouse && !(cfg.mouse_override && shift_pressed)) {
+		    POINT p;
+		    p.x = X_POS(lParam); p.y = Y_POS(lParam);
+		    if (ScreenToClient(hwnd, &p)) {
+			term_mouse(term, b, MA_CLICK, TO_CHR_X(p.x), TO_CHR_Y(p.y), shift_pressed, control_pressed, is_alt_pressed());
+			term_mouse(term, b, MA_RELEASE, TO_CHR_X(p.x), TO_CHR_Y(p.y), shift_pressed, control_pressed, is_alt_pressed());
+		    } 
+		} else {
+			if (control_pressed) {
+				cfg.font.height += MBT_WHEEL_UP == b ? 1 : -1;
+				term_size(term, cfg.height, cfg.width);
+				reset_window(2);
+			} else {
+				term_scroll(term, 0, b == MBT_WHEEL_UP ?  -term->rows / 2 : term->rows / 2);
+			}
+		}
+	    }
+	    return 0;
+*/

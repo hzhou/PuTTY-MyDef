@@ -1,0 +1,43 @@
+subcode: term_do_paste(buf, len)
+    $global wchar_t sel_nl[]={13,10}, n_sel_nl=2
+    term_seen_key_event(term)
+
+    $local wchar_t *ts_wbuf
+    $allocate($(len)) ts_wbuf
+    tn_wbuf_len=0
+
+    $local wchar_t *s1
+    $local wchar_t *s2
+    s1 = s2 = $(buf)
+    $(set:remaining=s1<$(buf)+$(len))
+    $(set:isCR=(s1<=$(buf)+$(len)-n_sel_nl)&&(memcmp(s1,sel_nl,sizeof(sel_nl))==0))
+    $while $(remaining)
+	# a line a time
+	$while $(remaining) && !($(isCR))
+	    s1++
+	$for i=0:s1-s2
+	    ts_wbuf[tn_wbuf_len++] = s2[i];
+	$if $(isCR)
+	    ts_wbuf[tn_wbuf_len++] = '\r'
+	    s1 += n_sel_nl
+	s2 = s1;
+    $call term_direct_paste
+    #$call term_aynch_paste
+
+subcode: term_direct_paste
+    linedisc_send_unicode(ts_wbuf, tn_wbuf_len)
+    free(ts_wbuf)
+
+/*
+subcode: term_aynch_paste
+    $if tn_wbuf_len < 256
+	term_nopaste(term)
+	$call term_direct_paste
+    $else
+	$declare void term_async_paste(TERM, wchar_t *, int)
+	term_async_paste(term, ts_wbuf, tn_wbuf_len)
+
+subcode:: Async_Events
+    $declare void term_paste(TERM)
+    term_paste(term);
+*/

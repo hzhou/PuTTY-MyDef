@@ -1,0 +1,89 @@
+
+# ---------------------------------------------------------------
+# ifdef OPTIMISE_SCROLL
+subcode: do_paint_optimise_scroll
+    sr = $.scrollhead;
+    while (sr) {
+	struct scrollregion *next = sr->next;
+	do_scroll(ctx, sr->topline, sr->botline, sr->lines);
+	sfree(sr);
+	sr = next;
+    }
+    $.scrollhead = $.scrolltail = NULL;
+
+subcode: optimised_scroll
+    tn_olddisptop = $.disptop;
+    tn_shift = tn_lines
+    $call scroll
+    tn_shift += $.disptop - tn_olddisptop;
+    $if tn_shift < $.rows && tn_shift > -$.rows && tn_shift != 0
+	scroll_display(term, tn_top, tn_bot, shift);
+
+
+struct scrollregion {
+    struct scrollregion *next;
+    int topline; /* Top line of scroll region. */
+    int botline; /* Bottom line of scroll region. */
+    int lines; /* Number of lines to scroll by - +ve is forwards. */
+};
+    struct scrollregion *scrollhead, *scrolltail;
+
+fncode: save_scroll(Terminal *term, int topline, int botline, int lines)
+{
+    struct scrollregion *newscroll;
+    if ($.scrolltail &&
+	$.scrolltail->topline == topline && 
+	$.scrolltail->botline == botline) {
+	$.scrolltail->lines += lines;
+    } else {
+	newscroll = snew(struct scrollregion);
+	newscroll->topline = topline;
+	newscroll->botline = botline;
+	newscroll->lines = lines;
+	newscroll->next = NULL;
+
+	if (!$.scrollhead)
+	    $.scrollhead = newscroll;
+	else
+	    $.scrolltail->next = newscroll;
+	$.scrolltail = newscroll;
+    }
+}
+
+/*
+ * Scroll the physical display, and our conception of it in disptext.
+ */
+static void scroll_display(Terminal *term, int topline, int botline, int lines)
+{
+    int distance, nlines, i, j;
+
+    distance = lines > 0 ? lines : -lines;
+    nlines = botline - topline + 1 - distance;
+    if (lines > 0) {
+	for (i = 0; i < nlines; i++)
+	    for (j = 0; j < $.cols; j++)
+		copy_termchar($.disptext[i], j,
+			      $.disptext[i+distance]->chars+j);
+	if ($.dispcursy >= 0 &&
+	    $.dispcursy >= topline + distance &&
+	    $.dispcursy < topline + distance + nlines)
+	    $.dispcursy -= distance;
+	for (i = 0; i < distance; i++)
+	    for (j = 0; j < $.cols; j++)
+		$.disptext[nlines+i]->chars[j].attr |= ATTR_INVALID;
+    } else {
+	for (i = nlines; i-- ;)
+	    for (j = 0; j < $.cols; j++)
+		copy_termchar($.disptext[i+distance], j,
+			      $.disptext[i]->chars+j);
+	if ($.dispcursy >= 0 &&
+	    $.dispcursy >= topline &&
+	    $.dispcursy < topline + nlines)
+	    $.dispcursy += distance;
+	for (i = 0; i < distance; i++)
+	    for (j = 0; j < $.cols; j++)
+		$.disptext[i]->chars[j].attr |= ATTR_INVALID;
+    }
+    save_scroll(term, topline, botline, lines);
+}
+

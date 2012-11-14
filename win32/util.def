@@ -1,0 +1,36 @@
+subcode: translate_numpad(in, out)
+    switch ($(in)) {
+      case VK_INSERT:
+	$(out) = VK_NUMPAD0;
+	break;
+      case VK_END:
+	$(out) = VK_NUMPAD1;
+	break;
+      case VK_DOWN:
+	$(out) = VK_NUMPAD2;
+	break;
+      case VK_NEXT:
+	$(out) = VK_NUMPAD3;
+	break;
+      case VK_LEFT:
+	$(out) = VK_NUMPAD4;
+	break;
+      case VK_CLEAR:
+	$(out) = VK_NUMPAD5;
+	break;
+      case VK_RIGHT:
+	$(out) = VK_NUMPAD6;
+	break;
+      case VK_HOME:
+	$(out) = VK_NUMPAD7;
+	break;
+      case VK_UP:
+	$(out) = VK_NUMPAD8;
+	break;
+      case VK_PRIOR:
+	$(out) = VK_NUMPAD9;
+	break;
+      case VK_DELETE:
+	$(out) = VK_DECIMAL;
+	break;
+    }

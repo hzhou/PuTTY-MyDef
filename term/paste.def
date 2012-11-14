@@ -1,0 +1,174 @@
+# ---- Copying ------------------------------------
+subcode:: global
+    $global extern wchar_t sel_nl[]={13,10}, extern int n_sel_nl
+
+subcode:: function_list
+    $struct(clipbuf) n_len, n_pos, wchar_t *p_wbuf, wchar_t *p_wptr, pn_attrbuf, pn_attrptr
+
+subcode: clip_init(b)
+    $get_struct_var_prefix(clip) $(b)
+    $(clip)buflen = 5120;			
+    $(clip)bufpos = 0;
+    $(clip)textptr = $(clip)textbuf = snewn($(clip)buflen, wchar_t);
+    $(clip)attrptr = $(clip)attrbuf = snewn($(clip)buflen, int);
+
+subcode: clip_free(b)
+    $get_struct_var_prefix(clip) $(b)
+    sfree($(clip)textbuf);
+    sfree($(clip)attrbuf);
+
+subcode: clip_expand(b)
+    $get_struct_var_prefix(clip) $(b)
+    $if $(clip)bufpos >= $(clip)buflen
+	$(clip)buflen += 128;
+	$(clip)textbuf = sresize($(clip)textbuf, $(clip)buflen, wchar_t);
+	$(clip)textptr = $(clip)textbuf + $(clip)bufpos;
+	$(clip)attrbuf = sresize($(clip)attrbuf, $(clip)buflen, int);
+	$(clip)attrptr = $(clip)attrbuf + $(clip)bufpos;
+
+subcode: clip_addchar(b, chr, attr)
+    $get_struct_var_prefix(clip) $(b)
+    $call clip_expand
+    *$(clip)textptr++ = $(chr)
+    *$(clip)attrptr++ = $(attr)
+    $(clip)bufpos++;
+
+subcode: clipme_get_lineend
+    tb_need_newline = 0
+    $local pos pos_lineend
+    pos_lineend.y = pos_top.y;
+    pos_lineend.x = term->cols;
+
+    $if !(p_line->lattr & LATTR_WRAPPED)
+	$while pos_lineend.x && IS_SPACE_CHR(p_line->chars[pos_lineend.x - 1].chr) && !p_line->chars[pos_lineend.x - 1].cc_next && poslt(pos_top, pos_lineend))
+	    decpos(pos_lineend);
+	$if poslt(pos_lineend, pos_bot)
+	    tb_need_newline = 1
+    $elif p_line->lattr & LATTR_WRAPPED2
+	decpos(pos_lineend);
+
+    $if tb_rect
+	$if pos_lineend.x > pos_bot.x
+	    pos_lineend.x = pos_bot.x;
+	$if pos_top.y<pos_bot.y
+	    tb_need_newline = 1
+
+subcode: clipme_get_line
+    $while poslt(pos_top, pos_bot) && poslt(pos_top, pos_lineend)
+	tn_x = pos_top.x;
+	$if p_line->chars[tn_x].chr == UCSWIDE
+	    pos_top.x++;
+	    continue;
+
+	$while 1
+	    tn_char = p_line->chars[tn_x].chr;
+	    tn_attr = p_line->chars[tn_x].attr;
+	    $call decode_cset, tn_char
+
+	    $if DIRECT_FONT(tn_char)
+		$call clipme_add_directfont
+	    $else
+		$call clip_addchar, t_stclipbuf, tn_char, tn_attr
+
+	    $if p_line->chars[tn_x].cc_next
+		tn_x += p_line->chars[tn_x].cc_next;
+	    $else
+		break;
+	pos_top.tn_x++;
+
+subcode: clipme_add_directfont
+    tn_c = tn_char & ~CSET_MASK
+    $if tn_c >= ' ' && tn_c != 0x7F
+	$local char  ts_sbuf[4]
+	$local WCHAR ts_wbuf[4]
+	$if is_dbcs_leadbyte(font_codepage, (BYTE) tn_c)
+	    ts_sbuf[0] = c;
+	    ts_sbuf[1] = (char)(0xFF & p_line->chars[pos_top.x + 1].chr)
+	    tn_ret = mb_to_wc(font_codepage, 0, ts_sbuf, 2, ts_wbuf, 4);
+	    pos_top.x++;
+	$else
+	    buf[0] = c;
+	    tn_ret = mb_to_wc(font_codepage, 0, ts_sbuf, 1, ts_wbuf, 4);
+
+	$if tn_ret > 0
+	    $for i=0:rv
+		$call clip_addchar, t_stclipbuf, wbuf[i], tn_attr
+
+fncode: clipme(Terminal *term, pos pos_top, pos pos_bot, tb_rect, tb_desel)
+    $local t_stclipbuf
+    $call clip_init, t_stclipbuf
+
+    tn_x0=0
+    $if tb_rect
+	tn_x0=pos_top.x
+
+    $while poslt(pos_top, pos_bot)
+	termline *p_line = lineptr(term, pos_top.y);
+	$call clipme_get_lineend
+	$call clipme_get_line
+	$if tb_need_newline
+	    $for i=0:n_sel_nl
+		$call clip_addchar, buf, sel_nl[i], 0
+	pos_top.y++;
+	pos_top.tn_x = tn_x0
+	unlineptr(p_line);
+
+    $call clip_addchar, t_stclipbuf, 0, 0
+
+    write_clip(term->frontend, t_stclipbuf.textbuf, t_stclipbuf.attrbuf, t_stclipbuf.bufpos, tb_desel);
+    $call clip_free, t_stclipbuf
+
+# ---- Pasting ------------------------------------
+subcode:: function_list
+    $list term_paste, term_nopaste, term_paste_pending
+    $list term_async_paste
+
+subcode:: on_term_init
+    $map term_decl, wchar_t *paste_buffer, int paste_len, int paste_pos, int paste_hold
+    $.paste_buffer = NULL;
+    $.paste_len = 0;
+
+subcode:: on_term_finish
+    $call term_clear_paste_buffer
+
+fncode: term_async_paste(Terminal *term, wchar_t *ts_wbuf, int tn_len)
+    $call term_clear_paste_buffer
+    $.paste_buffer=ts_wbuf
+    $.paste_len=tn_len
+    $.paste_pos=0
+
+# ---------------------------------------------------
+subcode: term_clear_paste_buffer
+    $if $.paste_buffer
+	free($.paste_buffer);
+	$.paste_buffer = NULL;
+	$.paste_len = 0;
+
+fncode: term_paste_pending(Terminal *term)
+    $return_type int
+    return $.paste_len != 0;
+
+# ---- the paste goes thru network that may be slow and blocking
+#      split them and do it between the messages
+#      so we may have a chance to cancel
+fncode: term_paste(Terminal *term)
+    # called between message loop
+    $if $.paste_len == 0
+	return;
+
+    $if $.paste_pos < $.paste_len
+	n=0
+	$while n + $.paste_pos < $.paste_len
+	    $if $.paste_buffer[$.paste_pos + n++] == '\r'
+		break;
+	linedisc_send_unicode($.paste_buffer+$.paste_pos, n)
+	$.paste_pos += n;
+
+    $if $.paste_pos < $.paste_len
+	return;
+    $else
+	$call term_clear_paste_buffer
+
+fncode: term_nopaste(Terminal *term)
+    $call term_clear_paste_buffer
+

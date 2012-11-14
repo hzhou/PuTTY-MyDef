@@ -1,0 +1,178 @@
+subcode:: WinMain_PreShow
+    $call init_mouse_handler
+
+#---- Mouse -------------------------------------------------------
+subcode:: function_list
+    $global n_busy_status=BUSY_NOT
+    $global n_send_raw_mouse=0
+    $list set_busy_status, update_mouse_pointer
+    $list set_raw_mouse_mode
+
+fncode: update_mouse_pointer
+    $local LPTSTR curstype;
+    $local tb_force_visible = FALSE;
+    $if n_busy_status == BUSY_NOT
+	$if n_send_raw_mouse
+	    curstype = IDC_ARROW;
+	$else
+	    curstype = IDC_IBEAM;
+    $elif n_busy_status==BUSY_WAITING
+	curstype = IDC_APPSTARTING;
+	tb_force_visible = TRUE;
+    $elif n_busy_status==BUSY_CPU
+	curstype = IDC_WAIT;
+	tb_force_visible = TRUE;
+    $else
+	assert(0);
+
+    $local HCURSOR cursor
+	cursor = LoadCursor(NULL, curstype);
+	SetClassLongPtr(hwnd, GCLP_HCURSOR, (LONG_PTR)cursor);
+	SetCursor(cursor)
+    
+    $local static b_forced_visible=FALSE
+    $if tb_force_visible != b_forced_visible
+	ShowCursor(tb_force_visible);
+	b_forced_visible = tb_force_visible;
+
+fncode: set_busy_status(void *frontend, tn_status)
+    n_busy_status = tn_status;
+    update_mouse_pointer();
+
+fncode: set_raw_mouse_mode(void *frontend, tn_activate)
+    tn_activate = tn_activate && !cfg.no_mouse_rep
+    n_send_raw_mouse = tn_activate;
+    update_mouse_pointer();
+
+# ------------------------------------------------
+subcode:: function_list
+    $global n_dblclicktime, n_lastclicktime, n_lastmouseact
+    $global Mouse_Button lastbtn
+    $list translate_button, click
+
+subcode: init_mouse_handler
+    n_lastmouseact = MA_NOTHING
+    lastbtn = MBT_NOTHING
+    n_dblclicktime = GetDoubleClickTime();
+
+fncode: click(Mouse_Button b, int x, int y, int shift, int ctrl, int alt)
+    tn_time = GetMessageTime();
+    $if n_send_raw_mouse && !(cfg.mouse_override && shift)
+	lastbtn = MBT_NOTHING;
+	term_mouse(term, b, MA_CLICK, x, y, shift, ctrl, alt);
+	return;
+
+    $if !(lastbtn == b && tn_time - n_lastclicktime < n_dblclicktime)
+	n_lastmouseact = MA_CLICK;
+    $elif n_lastmouseact == MA_CLICK
+	n_lastmouseact=MA_2CLK
+    $elif n_lastmouseact == MA_2CLK
+	n_lastmouseact=MA_3CLK
+    $elif n_lastmouseact == MA_3CLK
+	n_lastmouseact=MA_CLICK
+    $else
+	n_lastmouseact=MA_NOTHING
+    lastbtn = b;
+
+    $if n_lastmouseact != MA_NOTHING
+	term_mouse(term, b, n_lastmouseact, x, y, shift, ctrl, alt);
+
+    n_lastclicktime = tn_time;
+
+fncode: translate_button(Mouse_Button b)
+    $return_type Mouse_Button
+    $if b == MBT_LEFT
+	return MBT_SELECT;
+    $elif b == MBT_MIDDLE
+	return cfg.mouse_is_xterm == 1 ? MBT_PASTE : MBT_EXTEND;
+    $elif b == MBT_RIGHT
+	return cfg.mouse_is_xterm == 1 ? MBT_EXTEND : MBT_PASTE;
+    $else
+	return 0
+
+subcode: get_chr_position(x, y)
+    $if $(x)>=0
+	tn_chr_x=($(x)-offset_width)/font_width
+    $else
+	tn_chr_x=($(x)-font_width+1)/font_width
+    $if $(y)>=0
+	tn_chr_y=($(y)-offset_height)/font_height
+    $else
+	tn_chr_y=($(y)-font_height+1)/font_height
+
+subcode: on_mouse_pos
+    tn_pos_x=(int)(short)LOWORD(lparam)
+    tn_pos_y=(int)(short)HIWORD(lparam)
+    $call get_chr_position, tn_pos_x, tn_pos_y
+
+subcode: term_mouse(btn, act)
+    term_mouse(term, $(btn), $(act), tn_chr_x, tn_chr_y, wparam&MK_SHIFT,wparam&MK_CONTROL, is_alt_pressed())
+
+subcode: on_mouse(button, press)
+    show_mouseptr(1)
+    $call on_mouse_pos
+    $(if:press=1)
+	click($(button),tn_chr_x,tn_chr_y,wparam&MK_SHIFT,wparam&MK_CONTROL, is_alt_pressed())
+	SetCapture(hwnd)
+    $(else)
+	$call term_mouse, $(button), MA_RELEASE
+	$if !wparam & (MK_LBUTTON|MK_MBUTTON|MK_RBUTTON)
+	    ReleaseCapture()
+    return 0
+
+subcode: main_on_WM_LBUTTONDOWN
+    $if is_full_screen()
+	$local POINT pt
+	show_mouseptr(1)
+	GetCursorPos(&pt)
+	$if pt_on_topleft(pt)
+	    SendMessage(hwnd, WM_SYSCOMMAND, SC_MOUSEMENU, MAKELPARAM(pt.x, pt.y))
+	    return 0
+    $call on_mouse, MBT_LEFT, 1
+
+subcode: main_on_WM_RBUTTONDOWN
+    $if wparam & MK_CONTROL || cfg.mouse_is_xterm==2
+	# Ctrl + RightClick
+	$local POINT pt
+	show_mouseptr(1)
+	GetCursorPos(&pt)
+	TrackPopupMenu(popup_menus[MENU_CTX], TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL)
+	break
+    $call on_mouse, MBT_RIGHT, 1
+
+subcode: main_on_WM_MBUTTONDOWN
+    $call on_mouse, MBT_MIDDLE, 1
+
+subcode: main_on_WM_LBUTTONUP
+    $call on_mouse, MBT_LEFT, 0
+
+subcode: main_on_WM_RBUTTONUP
+    $call on_mouse, MBT_RIGHT, 0
+
+subcode: main_on_WM_MBUTTONUP
+    $call on_mouse, MBT_MIDDLE, 0
+
+subcode: show_mouseptr_on_move(msg)
+    $local static WPARAM last_wp=0, static LPARAM last_lp=0, static UINT last_mousemove=0
+    $if wparam !=last_wp || lparam != last_lp || last_mousemove!=$(msg)
+	show_mouseptr(1)
+	last_wp=wparam
+	last_lp=lparam
+	last_mousemove=$(msg)
+    noise_ultralight(lparam)
+
+subcode: main_on_WM_NCMOUSEMOVE:
+    $call show_mouseptr_on_move, WM_NCMOUSEMOVE
+
+subcode: main_on_WM_MOUSEMOVE
+    $call show_mouseptr_on_move, WM_MOUSEMOVE
+    $call on_mouse_pos
+    $if !wparam & (MK_LBUTTON|MK_MBUTTON|MK_RBUTTON)
+	$if GetCapture()==hwnd
+	    $if wparam&MK_LBUTTON
+		$call term_mouse, MBT_LEFT, MA_DRAG
+	    $elif wparam&MK_MBUTTON
+		$call term_mouse, MBT_MIDDLE, MA_DRAG
+	    $else
+		$call term_mouse, MBT_RIGHT, MA_DRAG
+

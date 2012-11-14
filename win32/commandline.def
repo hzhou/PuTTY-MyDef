@@ -1,0 +1,167 @@
+subcode: process_commandline
+    $symbol int default_protocol, int default_port
+
+    $local b_allow_launch
+    b_allow_launch=0
+
+    $local Backend * tp_b
+    default_protocol = be_default_protocol;
+    tp_b=backend_from_proto(default_protocol)
+    $if tp_b
+	default_port = tp_b->default_port;
+
+    cfg.logtype = LGTYP_NONE;
+    do_defaults(NULL, &cfg);
+
+    s = s_cmdline
+    $while *s && isspace(*s)
+	s++
+    $if *s == '@'
+	$call process_commandline_session_name
+	b_allow_launch = 1
+    $elif *s == '&'
+	$call process_commandline_config_handle
+	b_allow_launch = 1
+    $else
+	$local int argc, char ** argv
+	split_into_argv(s_cmdline, &argc, &argv, NULL);
+	$for i=0:argc
+	    s=argv[i]
+	    tn_ret = cmdline_process_param(s, i+1<argc?argv[i+1]:NULL, 1, &cfg)
+	    $if tn_ret== -2
+		cmdline_error("option \"%s\" requires an argument", s)
+	    $elif tn_ret==2
+		i++
+	    $elif tn_ret==1
+		continue
+	    $elif strcmp(s, "-cleanup")==0 || strcmp(s, "-cleanup-during-uninstall")==0
+		$call process_commandline_cleanup
+	    $elif strcmp(s, "-pgpfp")==0
+		pgp_fingerprints();
+		exit(1);
+	    $elif *s != '-'
+		$local b_got_host=0
+		$if b_got_host
+		    # treat as a port number
+		    tn_ret = cmdline_process_param("-P", s, 1, &cfg);
+		    assert(tn_ret == 2);
+		$elif strncmp(s, "telnet:", 7)==0
+		    $call process_commandline_host_telnet
+		    b_got_host = 1;
+		$else
+		    $call process_commandline_host
+		    b_got_host = 1;
+	    $else
+		cmdline_error("unknown option \"%s\"", s);
+
+    cmdline_run_saved(&cfg);
+
+    $if loaded_session || b_got_host
+	b_allow_launch = 1
+
+
+# ---------------------------------------------
+subcode: skip_space
+    $while *s && isspace(*s)
+	s++
+
+subcode: trim_space
+    n = strlen(s);
+    $while n > 1 && isspace(s[n - 1])
+	n--
+    s[n] = '\0';
+
+# ----------------------------------------
+subcode: process_commandline_session_name
+    # session name
+    $call trim_space
+    do_defaults(s + 1, &cfg);
+
+    $if !cfg_launchable(&cfg)
+	do_defaults_file(s + 1, &cfg);
+
+    $if !cfg_launchable(&cfg) && !do_config()
+	cleanup_exit(0)
+
+subcode: process_commandline_config_handle
+    $local HANDLE filemap, Config * tp_cfg
+    $if sscanf(s+1, "%p", &filemap) == 1
+	tp_cfg = MapViewOfFile(filemap, FILE_MAP_READ, 0, 0, sizeof(tp_cfg))
+	$if tp_cfg != NULL
+	    cfg = *tp_cfg;
+	    UnmapViewOfFile(tp_cfg);
+	    CloseHandle(filemap);
+    $elif !do_config()
+	cleanup_exit(0)
+
+subcode: process_commandline_host_telnet
+    s = s+7;
+    $if s[0] == '/' && s[1] == '/'
+	s += 2;
+    cfg.protocol = PROT_TELNET;
+    s1=s
+    $while *s1 && *s1 != ':' && *s1 !='/'
+	s1++;
+    $if *s1==':'
+	cfg.port = atoi(s1+1);
+    $else
+	cfg.port = -1;
+    $if *s1
+	*s1 = '\0';
+    strncpy(cfg.host, s1, sizeof(cfg.host) - 1);
+    cfg.host[sizeof(cfg.host) - 1] = '\0';
+
+subcode: process_commandline_host
+    s1=s
+    $while *s1 && !isspace(*s1)
+	s1++
+    $if *s1
+	*s1 = '\0';
+    strncpy(cfg.host, s, sizeof(cfg.host) - 1);
+    cfg.host[sizeof(cfg.host) - 1] = '\0';
+
+subcode: process_commandline_cleanup
+    # Remove all registry entries associated with PuTTY
+    #    and delete the random seed file
+    $if strcmp(s, "-cleanup-during-uninstall")==0
+	s1 = dupprintf("Remove saved sessions and random seed file?\n" "\n" "If you hit Yes, ALL Registry entries associated\n" "with %s will be removed, as well as the\n" "random seed file. THIS PROCESS WILL\n" "DESTROY YOUR SAVED SESSIONS.\n" "(This only affects the currently logged-in user.)\n" "\n" "If you hit No, uninstallation will proceed, but\n" "saved sessions etc will be left on the machine.", appname);
+	s2 = dupprintf("%s Uninstallation", appname);
+    $else
+	s1 = dupprintf("This procedure will remove ALL Registry entries\n" "associated with %s, and will also remove\n" "the random seed file. (This only affects the\n" "currently logged-in user.)\n" "\n" "THIS PROCESS WILL DESTROY YOUR SAVED SESSIONS.\n" "Are you really sure you want to continue?", appname);
+	s2 = dupprintf("%s Warning", appname);
+    $if message_box(s1, s2, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2, HELPCTXID(option_cleanup)) == IDYES
+	cleanup_all()
+    sfree(s1);
+    sfree(s2);
+    exit(0);
+
+# ---------------------------------------------
+subcode: process_cfg_hostname
+    # trim leading spaces
+    s=cfg.host
+    $call skip_space
+    memmove(cfg.host, s, strlen(s)+1)
+
+    # user@host
+    $if cfg.host[0] != '\0'
+	s = strrchr(cfg.host, '@')
+	$if s
+	    $if s-cfg.host < sizeof(cfg.username)
+		strncpy(cfg.username, cfg.host, s - cfg.host);
+		cfg.username[s - cfg.host] = '\0';
+	    memmove(cfg.host, s + 1, 1 + strlen(s + 1));
+
+    # host:port
+    s=strchr(cfg.host, ':')
+    $if s
+	$if ! strchr(s+1, ':')
+	    # not ipv6
+	    *s = '\0';
+
+    # trim leading spaces
+    s=cfg.host
+    $call skip_space
+    memmove(cfg.host, s, strlen(s)+1)
+
+    #printf("host: %s, port: %d\n", cfg.host, cfg.port)
+

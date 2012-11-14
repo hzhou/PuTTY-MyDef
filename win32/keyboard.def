@@ -1,0 +1,470 @@
+#---- Keyboard -------------------------------------------------------
+subcode:: function_list
+    $(export:vk=(keystate[VK_$(1)]&0x80))
+    $(export:nvk=((keystate[VK_$(1)]&0x80)==0))
+    $(export:kf=(HIWORD(lparam)&KF_$(1)))
+    $(export:nkf=((HIWORD(lparam)&KF_$(1))==0))
+    $declare void term_seen_key_event(TERM)
+    $declare void term_nopaste(TERM)
+
+subcode: TranslateMessage
+    TranslateMessage(&msg)
+
+subcode: main_on_WM_CHAR
+    term_seen_key_event(term);
+    linedisc_send_codepage(CP_ACP, (unsigned char *)&wparam, 1)
+
+subcode: main_on_WM_IME_CHAR
+    term_seen_key_event(term);
+    $if wparam & 0xFF00
+	$local unsigned char buf[2];
+	buf[1] = wparam;
+	buf[0] = wparam >> 8;
+	linedisc_send_codepage(kbd_codepage, buf, 2);
+    $else
+	c = (unsigned char) wparam;
+	linedisc_send_codepage(kbd_codepage, &c, 1);
+    return 0
+
+subcode: main_on_WM_KEYDOWN
+    $local pc_out[100]
+    $local unsigned char * p
+    p=pc_out
+
+    $call grab_keystate
+    $call check_auto_repeat
+    tn_code=0
+    $call check_home_keys
+    $call check_arrow_keys
+    $call check_F_keys
+
+    break
+    finish_return:
+	tn_ret=p-pc_out
+	$call return_out
+
+subcode: return_out
+    $if tn_ret!=0
+	term_nopaste(term);
+	term_seen_key_event(term);
+	linedisc_send(pc_out, tn_ret)
+	show_mouseptr(0);
+    return 0
+
+subcode: main_on_WM_SYSKEYDOWN
+    $if $(nkf:ALTDOWN)
+	break
+    # -- Alt+Enter
+    $if wparam == VK_RETURN && cfg.fullscreenonaltenter && (cfg.resize_action != RESIZE_DISABLED)
+	$if $(nkf:REPEAT)
+	    $call flip_full_screen
+	return 0
+    $call ignore_alt_only
+
+# -- IME ------------------------------------
+subcode: main_on_WM_IME_STARTCOMPOSITION:
+    HIMC hImc = ImmGetContext(hwnd);
+    $local LOGFONT lf
+    GetObject(fonts[FONT_NORMAL], sizeof(LOGFONT), &lf);
+    ImmSetCompositionFont(hImc, &lf);
+    ImmReleaseContext(hwnd, hImc);
+    break;
+
+subcode: main_on_WM_IME_COMPOSITION
+    $if (lparam & GCS_RESULTSTR) == 0 
+	/* Composition unfinished. *//* fall back to DefWindowProc */
+	break
+
+    HIMC hIMC = ImmGetContext(hwnd);
+    n = ImmGetCompositionStringW(hIMC, GCS_RESULTSTR, NULL, 0);
+
+    $if n>0
+	$local_allocate(n) ts_buff
+	ImmGetCompositionStringW(hIMC, GCS_RESULTSTR, ts_buff, n);
+	term_seen_key_event(term);
+	$for i=0;i<n;i+=2
+	    linedisc_send_unicode((unsigned short *)(ts_buff+i), 1)
+    ImmReleaseContext(hwnd, hIMC);
+    return 1;
+
+# -------------------------------------------
+subcode:: function_list
+    $list is_alt_pressed, is_ctrl_pressed
+
+fncode: is_alt_pressed
+    $local pc_keys[256]
+    $if GetKeyboardState(pc_keys)
+	$if pc_keys[VK_MENU] & 0x80 || pc_keys[VK_RMENU] & 0x80
+	    return 1;
+    return 0
+
+fncode: is_ctrl_pressed
+    $local pc_keys[256]
+    $if GetKeyboardState(pc_keys)
+	$if pc_keys[VK_CONTROL] & 0x80 
+	    return 1;
+    return 0
+
+# -------------------------------------------
+subcode:: function_list
+    $global int kbd_codepage
+    $list set_input_locale
+
+subcode:: WinMain_PreShow
+    set_input_locale(GetKeyboardLayout(0))
+
+subcode: main_on_WM_INPUTLANGCHANGE:
+    # wparam == Font number, lparam == Locale 
+    set_input_locale((HKL)lparam);
+    sys_cursor_update();
+    break;
+
+fncode: set_input_locale(HKL kl)
+    $local ts_buf[20]
+    GetLocaleInfo(LOWORD(kl), LOCALE_IDEFAULTANSICODEPAGE, ts_buf, sizeof(ts_buf));
+    kbd_codepage = atoi(ts_buf);
+
+/*
+ * Translate a WM_(SYS)?KEY(UP|DOWN) message into a string of ASCII
+ * codes. Returns number of bytes used, zero to drop the message,
+ * -1 to forward the message to Windows, or another negative number
+ * to indicate a NUL-terminated "special" string.
+ */
+
+subcode: grab_keystate
+    $local BYTE keystate[256]
+    tn_left_alt_down=0
+    tn_capsOn=0
+    tn_key_down = $(nkf:UP)
+    tn_shift=0
+
+    tn_ret = GetKeyboardState(keystate);
+    $if !tn_ret
+	memset(keystate, 0, sizeof(keystate));
+    $else
+	$if $(kf:ALTDOWN) && $(nvk:RMENU)
+	    tn_left_alt_down = 1;
+
+	$if $(vk:SHIFT)
+	    tn_shift=0x1
+	$if $(vk:CONTROL)
+	    tn_shift|=0x2
+
+	$if wparam == VK_MENU && $(kf:EXTENDED)
+	    keystate[VK_RMENU] = keystate[VK_MENU];
+
+	$if cfg.xlat_capslockcyr && keystate[VK_CAPITAL] != 0
+	    tn_capsOn= !tn_left_alt_down;
+	    keystate[VK_CAPITAL] = 0;
+
+	$if tn_left_alt_down && $(vk:CONTROL)
+	    $if cfg.ctrlaltkeys
+		keystate[VK_MENU] = 0;
+	    $else
+		keystate[VK_RMENU] = 0x80;
+		tn_left_alt_down = 0;
+
+subcode: check_auto_repeat
+    $if tn_key_down
+	$if $(kf:REPEAT)
+	    return 0;
+
+subcode: ignore_alt_only
+    $if wparam == VK_MENU && !cfg.alt_only
+	return 0;
+
+# ----------------------------------------------
+subcode: xkey(vk, a)
+    case VK_$(vk):
+	tn_code='$(a)'
+	break
+
+subcode: xkey_cond(vk, a, cond)
+    case VK_$(vk):
+	$if $(cond)
+	    tn_code='$(a)'
+	    break
+
+subcode: code_shift(vk, a, b)
+    case VK_$(vk):
+	tn_code=(keystate[VK_SHIFT]&0x80 ? $(a) : $(b))
+	break
+subcode: code_normal(vk, a)
+    case VK_$(vk):
+	tn_code=$(a)
+	break
+
+# -------------------------------------------------------------
+subcode: check_home_keys
+    $if (tn_shift&2) == 0 
+	tn_code=0
+	$switch wparam
+	    $call code_normal, HOME, 1
+	    $call code_normal, INSERT, 2
+	    $call code_normal, DELETE, 3
+	    $call code_normal, END, 4
+	    $call code_normal, PRIOR, 5
+	    $call code_normal, NEXT, 6
+	$if tn_code>0
+	    # Reorder edit keys to physical order 
+	    # tn_code = "\0\2\1\4\5\3\6"[tn_code]
+	    $call @on_translate_home_keys
+	    p += sprintf((char *) p, "\x1B[%d~", tn_code);
+	    goto finish_return
+
+# -------------------------------------------
+subcode: check_arrow_keys
+    $switch wparam
+	$call xkey, UP, A
+	$call xkey, DOWN, B
+	$call xkey, RIGHT, C
+	$call xkey, LEFT, D
+	$call xkey, CLEAR, G
+    $if tn_code
+	$declare int term_app_cursor_keys(TERM)
+	tb_app_cursor_keys=term_app_cursor_keys(term)
+	$if tn_shift==2
+	    tb_app_cursor_keys=!tb_app_cursor_keys
+	$if !tb_app_cursor_keys
+	    p+=sprintf(p, "\x1B[%c", tn_code)
+	$else
+	    # vim use it, I wonder why
+	    p+=sprintf(p, "\x1BO%c", tn_code)
+	goto finish_return
+
+
+# -------------------------------------------
+subcode: check_F_keys
+    tn_code=0
+    $switch wparam
+        $call code_normal, F1, 1
+        $call code_normal, F2, 2
+        $call code_normal, F3, 3
+        $call code_normal, F4, 4
+        $call code_normal, F5, 5
+        $call code_normal, F6, 6
+        $call code_normal, F7, 7
+        $call code_normal, F8, 8
+        $call code_normal, F9, 9
+        $call code_normal, F10, 10
+        $call code_normal, F11, 11
+        $call code_normal, F12, 12
+
+    $if tn_code>0
+	$call @on_translate_Fkey
+	tn_code+=10
+	$if tn_code>=16
+	    tn_code++
+	$if tn_code>=22
+	    tn_code++
+	$if $(vk:SHIFT)
+	    tn_code+=12
+	    $if tn_code>=27
+		tn_code++
+	$call out_fkey_code
+
+subcode: out_fkey_code
+    p += sprintf((char *) p, "\x1B[%d~", tn_code);
+    goto finish_return
+
+/*
+subcode:: on_translate_Fkey
+    $dump(check_F_keys) tn_code
+    $if tn_code==12
+	$declare void term_debug_screen(TERM)
+	term_debug_screen(term)
+*/
+# ------------------------------------------
+subcode: check_alt_sum_down
+    $global tn_alt_sum
+    $if tn_left_alt_down && wparam >= VK_NUMPAD0 && wparam <= VK_NUMPAD9
+	tn_alt_sum = tn_alt_sum * 10 + wparam - VK_NUMPAD0;
+    $else
+	tn_alt_sum = 0;
+
+subcode: check_alt_sum_up
+    $if line_codepage==CP_UTF8 || font_isdbcs
+	$local WCHAR t_wchar
+	t_wchar = tn_alt_sum
+	term_seen_key_event(term);
+	linedisc_send_unicode(&t_wchar, 1)
+    $else
+	ch = (char) tn_alt_sum;
+	term_seen_key_event(term);
+	linedisc_send_unicode(&ch, 1)
+    tn_alt_sum = 0;
+# --------------------------------------------------
+subcode: check_known_key_message
+    # -- Shift/Ctrl + PgUp/Dn  -> WM_VSCROLL 
+    $if wparam == VK_PRIOR && tn_shift == 1
+	SendMessage(hwnd, WM_VSCROLL, SB_PAGEUP, 0);
+	return 0;
+    $if wparam == VK_PRIOR && tn_shift == 2
+	SendMessage(hwnd, WM_VSCROLL, SB_LINEUP, 0);
+	return 0;
+    $if wparam == VK_NEXT && tn_shift == 1
+	SendMessage(hwnd, WM_VSCROLL, SB_PAGEDOWN, 0);
+	return 0;
+    $if wparam == VK_NEXT && tn_shift == 2
+	SendMessage(hwnd, WM_VSCROLL, SB_LINEDOWN, 0);
+	return 0;
+    # -- Ctrl + Shift + PgUp/Dn -> term_scroll_to_selection
+    $if (wparam == VK_PRIOR || wparam == VK_NEXT) && tn_shift == 3
+	term_scroll_to_selection(term, (wparam == VK_PRIOR ? 0 : 1));
+	return 0;
+    # -- Shift + Ins
+    $if wparam == VK_INSERT && tn_shift == 1
+	request_paste(NULL);
+	return 0;
+    # -- Alt+F4
+    $if tn_left_alt_down && wparam == VK_F4 && cfg.alt_f4
+	return -1;
+    # -- Alt+Space
+    $if tn_left_alt_down && wparam == VK_SPACE && cfg.alt_space
+	SendMessage(hwnd, WM_SYSCOMMAND, SC_KEYMENU, 0);
+	return -1;
+    # -- Alt+Enter
+    $if tn_left_alt_down && wparam == VK_RETURN && cfg.fullscreenonaltenter && (cfg.resize_action != RESIZE_DISABLED)
+	$if (HIWORD(lparam) & (KF_UP | KF_REPEAT)) != KF_REPEAT
+	    $call flip_full_screen
+	return -1;
+
+# --------------------------------------------------
+subcode: check_known_key_translation
+    # Shift tab
+    if (wparam == VK_TAB && tn_shift == 1) {	
+	*p++ = 0x1B;
+	*p++ = '[';
+	*p++ = 'Z';
+	goto finish_return
+    }
+    # Ctrl-Space 
+    if (wparam == VK_SPACE && tn_shift == 2) {	
+	*p++ = 0;
+	goto finish_return
+    }
+    # Ctrl-Shift-Space 
+    if (wparam == VK_SPACE && tn_shift == 3) {	
+	*p++ = 160;
+	goto finish_return
+    }
+    # Ctrl-Break
+    if (wparam == VK_CANCEL && tn_shift == 2) {	
+	if (back)
+	    back->special(backhandle, TS_BRK);
+	return 0;
+    }
+    /* Control-2 to Control-8 are special */
+    if (tn_shift == 2 && wparam >= '2' && wparam <= '8') {
+	*p++ = "\000\033\034\035\036\037\177"[wparam - '2'];
+	goto finish_return
+    }
+    if (tn_shift == 2 && (wparam == 0xBD || wparam == 0xBF)) {
+	*p++ = 0x1F;
+	goto finish_return
+    }
+    if (tn_shift == 2 && (wparam == 0xDF || wparam == 0xDC)) {
+	*p++ = 0x1C;
+	goto finish_return
+    }
+    # Ctrl-~ == Ctrl-^ in xterm at least 
+    if (tn_shift == 3 && wparam == 0xDE) {
+	*p++ = 0x1E;
+	goto finish_return
+    }
+    # --
+    # Break/Pause 
+    $call return_special, wparam==VK_PAUSE, 26
+    # Backspace 
+    $call return_special, wparam==VK_BACK && tn_shift==0, cfg.bksp_is_delete?0x7F:0x08
+    # Shift Backspace 
+    $call return_special, wparam==VK_BACK && tn_shift==1, cfg.bksp_is_delete?0x08:0x7F
+
+subcode: check_return
+    $call return_special, wparam==VK_RETURN, 0x0D
+
+subcode: return_special(condition, key)
+    $if $(condition)
+	*p++=$(key)
+	*p++=0
+	tn_ret=-2
+	goto finish_return_special
+
+# ------------------------------------------------
+subcode: vk_out(vk, l)
+    case VK_$(vk):
+	*p++=$(l)[tn_shift & 3]
+	goto finish_return
+
+subcode: check_nethack
+    $if cfg.nethack_keypad
+	$switch wparam
+	    $call vk_out, NUMPAD1, "bB\002\002"
+	    $call vk_out, NUMPAD2, "jJ\012\012"
+	    $call vk_out, NUMPAD3, "nN\016\016"
+	    $call vk_out, NUMPAD4, "hH\010\010"
+	    $call vk_out, NUMPAD5, "...."
+	    $call vk_out, NUMPAD6, "lL\014\014"
+	    $call vk_out, NUMPAD7, "yY\031\031"
+	    $call vk_out, NUMPAD8, "kK\013\013"
+	    $call vk_out, NUMPAD9, "uU\025\025"
+
+# --------------------------------------------------
+# DEC like Compose key
+subcode:: global
+    $global int compose_state=0
+    $global int compose_char
+    $global int compose_key
+    $global WORD keys[3]
+
+subcode:: main_on_WM_SETFOCUS
+    compose_state = 0;
+
+subcode: update_compose_state
+    $if !compose_state
+	compose_key = 0x100;
+	$if cfg.compose_key
+	    $if wparam == VK_MENU && $(kf:EXTENDED)
+		# Right Alt Key
+		compose_key = VK_MENU
+	$if wparam == VK_APPS
+	    compose_key = VK_APPS
+
+    $if wparam == compose_key
+	$if compose_state == 0 && (HIWORD(lparam) & (KF_UP | KF_REPEAT)) == 0 
+	    # Compose key down
+	    compose_state = 1;
+	    return 0
+	$elif compose_state == 1 && $(kf:UP)
+	    # Compose key up
+	    compose_state = 2;
+	    return 0
+	$else
+	    # 
+	    compose_state = 0;
+    $elif compose_state == 1 && wparam != VK_CONTROL
+	compose_state = 0;
+
+    $if compose_state > 1 && tn_left_alt_down
+	compose_state = 0;
+
+subcode: check_compose_key
+    # inside a loop after ToAsciiEx, ch holds the key
+    $if compose_state == 2 && ch<0x80 && ch > ' '
+	compose_char = ch;
+	compose_state++;
+	continue;
+    $elif compose_state == 3 && ch<0x80 && ch > ' '
+	compose_state = 0;
+
+	tn_ret=check_compose(compose_char, ch)
+	$if tn_ret==-1
+	    MessageBeep(MB_ICONHAND);
+	    return 0;
+	term_seen_key_event(term);
+	WCHAR t_wchar=tn_ret
+	linedisc_send_unicode(&t_wchar, 1)
+	continue;
+    $else
+	compose_state = 0;
+

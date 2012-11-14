@@ -1,0 +1,328 @@
+subcode:: global
+    $define(poslt(p1,p2)) ( (p1).y < (p2).y || ( (p1).y == (p2).y && (p1).x < (p2).x ))
+    $define(posle(p1,p2)) ( (p1).y < (p2).y || ( (p1).y == (p2).y && (p1).x <= (p2).x ))
+    $define(poseq(p1,p2)) ( (p1).y == (p2).y && (p1).x == (p2).x )
+    $define(posdiff(p1,p2)) ( ((p1).y - (p2).y)* (term->cols+1)+ (p1).x - (p2).x )
+
+    $define(incpos(p)) ( (p).x == term->cols ? ((p).x = 0, (p).y++, 1): ((p).x++, 0))
+    $define(decpos(p)) ( (p).x == 0 ? ((p).x = term->cols, (p).y--, 1): ((p).x--, 0))
+
+subcode:: on_term_init
+    $enumbase(SM) CHAR, WORD, LINE
+    $enumbase() NO_SELECTION, ABOUT_TO, DRAGGING, SELECTED
+    $enumbase() LEXICOGRAPHIC, RECTANGULAR
+    $map term_decl, pos selstart, pos selend, pos selanchor
+    $map term_decl, int selstate, int seltype, int selmode
+    $map term_decl, int xterm_mouse
+
+subcode:: on_term_power_on
+    $call term_select_clear
+
+subcode:: on_term_size_before
+    $call term_select_clear
+
+subcode: term_select_clear
+    $.selstate = NO_SELECTION
+    $.selstart.x = 0
+    $.selstart.y = 0
+    $.selend.x = 0
+    $.selend.y = 0
+
+# ------------------------------------------------------
+fncode: term_deselect(Terminal *term)
+    $call term_select_clear
+    term_update(term);
+
+fncode: term_copyall(Terminal *term)
+    $local pos top
+    $local pos bottom
+    $call get_scrollback_top, top.y
+    top.x = 0;
+    bottom.y = find_last_nonempty_line(term, $.screen);
+    bottom.x = $.cols;
+    clipme(term, top, bottom, 0, TRUE);
+
+# ---- scroll --------------------------------------------------
+subcode: pos_down_one(pos, top, bot)
+    $if $(pos).y >= $(top) && $(pos).y <= $(bot)
+	$(pos).y++;
+	$if $(pos).y > $(bot)
+	    $(pos).y = $(bot) + 1;
+	    $(pos).x = 0;
+
+subcode: scroll_selection_down_one
+    $call pos_down_one, $.selstart, tn_top, tn_bot
+    $call pos_down_one, $.selend,   tn_top, tn_bot
+
+subcode: pos_up_one(pos, top, bot)
+    $if $(pos).y >= $(top) && $(pos).y <= $(bot)
+	$(pos).y--
+	$if $(pos).y < $(top)
+	    $(pos).y = $(top)
+	    $(pos).x = 0;
+
+subcode: scroll_selection_up_one(top)
+    $if $.selstate != NO_SELECTION
+	$call pos_up_one, $.selstart,  $(top), tn_bot
+	$call pos_up_one, $.selend,    $(top), tn_bot
+	$call pos_up_one, $.selanchor, $(top), tn_bot
+
+# ------------------------------------------------------
+fncode: sel_spread(Terminal *term)
+    $if $.seltype == LEXICOGRAPHIC
+	$.selstart = sel_spread_half(term, $.selstart, -1);
+	decpos($.selend);
+	$.selend = sel_spread_half(term, $.selend, +1);
+	incpos($.selend);
+
+fncode: sel_spread_half(Terminal *term, pos p, int tn_dir)
+    $return_type pos
+    $define IS_SPACE_CHR(chr) ((chr)==0x20 || (DIRECT_CHAR(chr)&&((chr)&0xFF)==0x20))
+
+    $local termline *p_line
+    p_line = lineptr(term, p.y);
+
+    $if $.selmode==SM_CHAR
+	$call sel_spread_char
+    $elif $.selmode==SM_WORD
+	$call sel_spread_word
+    $elif $.selmode==SM_LINE
+	p.x = (tn_dir == -1 ? 0 : $.cols - 1)
+
+    unlineptr(p_line);
+    return p;
+
+subcode: sel_spread_char
+    $if !(p_line->lattr & LATTR_WRAPPED)
+	termchar *q = p_line->chars + $.cols;
+	$while q>p_line->chars && IS_SPACE_CHR(q[-1].chr) && !q[-1].cc_next
+	    q--
+	$if q == p_line->chars + $.cols
+	    q--
+	$if p.x >= q - p_line->chars
+	    p.x = (tn_dir == -1 ? q - p_line->chars : $.cols - 1);
+
+subcode: sel_spread_word
+    $define(UCSGET(a,x)) ((x)>0 && (a)[(x)].chr == UCSWIDE ? (a)[(x)-1].chr : (a)[(x)].chr )
+    tn_type = wordtype(term, UCSGET(p_line->chars, p.x));
+    $if tn_dir==1
+	$call sel_spread_word_right
+    $else
+	$call sel_spread_word_left
+
+subcode: sel_spread_word_right
+    $while 1
+	tn_maxcols =(p_line->lattr & LATTR_WRAPPED2 ?  $.cols-1 : $.cols)
+	$if p.x < tn_maxcols-1
+	    $if wordtype(term, UCSGET(p_line->chars, p.x+1)) == tn_type
+		p.x++;
+	    $else
+		break;
+	$else
+	    $if p_line->lattr & LATTR_WRAPPED
+		$local termline *p_line2
+		p_line2 = lineptr(term, p.y+1);
+		$if wordtype(term, UCSGET(p_line2->chars, 0) == tn_type
+		    p.x = 0;
+		    p.y++
+		    unlineptr(p_line);
+		    p_line = p_line2;
+		$lese
+		    unlineptr(p_line2);
+		    break;
+	    $else
+		break;
+subcode: sel_spread_word_left
+    $while 1
+	$if p.x > 0
+	    $if wordtype(term, UCSGET(p_line->chars, p.x-1)) == tn_type
+		p.x--;
+	    $else
+		break;
+	$else
+	    $local termline *p_line2;
+	    tn_topy = -sblines(term);
+	    $if p.y <= tn_topy
+		break;
+	    p_line2 = lineptr(term, p.y-1)
+	    tn_maxcols = (p_line2->lattr & LATTR_WRAPPED2 ?  $.cols-1 : $.cols);
+	    $if p_line2->lattr & LATTR_WRAPPED
+		$if wordtype(term, UCSGET(p_line2->chars, maxcols-1)) == tn_type
+		    p.x = maxcols-1;
+		    p.y--;
+		    unlineptr(p_line);
+		    p_line = p_line2;
+		$else
+		    unlineptr(p_line2);
+		    break;
+	    $else
+		break;
+
+# ----------------------------------------------------------------
+subcode: do_paint_check_selection(pos, attr)
+    $define(posPlt(p1,p2)) ( (p1).y <= (p2).y && (p1).x < (p2).x )
+    $define(posPle(p1,p2)) ( (p1).y <= (p2).y && (p1).x <= (p2).x )
+    $if $.selstate == DRAGGING || $.selstate == SELECTED
+	$if $.seltype == LEXICOGRAPHIC
+	    tb_selected = (posle($.selstart, $(pos)) && poslt($(pos), $.selend));
+	$else
+	    tb_selected = (posPle($.selstart, $(pos))&& posPlt($(pos), $.selend));
+    $else
+	tb_selected = FALSE;
+
+# ----------------------------------------------------------------
+subcode: check_deselect(from, to)
+    $if poslt($(from), $.selend) && poslt($.selstart, $(to))
+	$call term_select_clear
+
+subcode: check_deselect_curs
+    $if $.selstate != NO_SELECTION
+	pos pos_next = $.curs;
+	incpos(pos_next)
+	$call check_deselect, $.curs, pos_next
+
+# #######################################################################
+subcode:: on_term_init
+    $.xterm_mouse=0
+    set_raw_mouse_mode(NULL, 0)
+
+subcode: term_mouse_fit_pos
+    $local pos selpoint
+    $if a==MA_DRAG && !tb_raw
+	$if y<0
+	    term_scroll(term, 0, -1);
+	$elif y>$.rows-1
+	    term_scroll(term, 0, 1);
+    $if x<0 && y>0
+	x=$.cols-1
+	y--
+    $call fit_range, y, 0, $.rows-1
+    $call fit_range, x, 0, $.cols-1
+
+    selpoint.x = x
+    selpoint.y = y + $.disptop
+
+    $call @bidi_adjust_x, selpoint.x, y
+
+fncode: term_mouse(Terminal *term, Mouse_Button btn, Mouse_Action a, int x, int y, tb_shift, tb_ctrl, tb_alt)
+{
+    tb_raw= ($.xterm_mouse && !cfg.no_mouse_rep && !(cfg.mouse_override && tb_shift));
+    $call term_mouse_fit_pos
+    $if tb_raw && ($.selstate != ABOUT_TO) && ($.selstate != DRAGGING)
+	$call fit_range, x, 0, $.cols-1
+	$call fit_range, y, 0, $.rows-1
+	$call term_mouse_raw, braw, a
+	return;
+    $else
+	btn=translate_button(btn)
+
+    $if !tb_alt ^ !cfg.rect_select
+	tn_default_seltype = RECTANGULAR;
+    $else
+	tn_default_seltype = LEXICOGRAPHIC;
+
+    $if $.selstate == NO_SELECTION
+	$.seltype = tn_default_seltype;
+
+    $if btn == MBT_SELECT && a == MA_CLICK
+	$call term_select_clear
+	$.selstate = ABOUT_TO;
+	$.seltype = tn_default_seltype;
+	$.selanchor = selpoint;
+	$.selmode = SM_CHAR;
+
+    $elif btn == MBT_SELECT && a == MA_RELEASE && $.selstate == ABOUT_TO
+	$call term_select_clear
+	$.selstate = NO_SELECTION;
+	$call @term_mouse_click_url_hack
+
+    $elif btn == MBT_SELECT && (a == MA_2CLK || a == MA_3CLK)
+	$call term_select_clear
+	$.selmode = (a == MA_2CLK ? SM_WORD : SM_LINE);
+	$.selstate = DRAGGING;
+	$.selstart = $.selanchor = selpoint;
+	$.selend = $.selstart;
+	incpos($.selend);
+	sel_spread(term);
+    $elif (btn == MBT_SELECT && a == MA_DRAG) || (btn == MBT_EXTEND && a != MA_RELEASE)
+	$if btn==MBT_EXTEND && a != MA_DRAG && $.selstate == SELECTED
+	    $call term_mouse_extend_anchor
+	$if $.selstate != ABOUT_TO && $.selstate != DRAGGING
+	    $.selanchor = selpoint
+	$.selstate = DRAGGING;
+	$call term_mouse_drag
+	sel_spread(term);
+    $elif (btn == MBT_SELECT || btn == MBT_EXTEND) && a == MA_RELEASE
+	$if $.selstate == DRAGGING
+	    clipme(term, $.selstart, $.selend, ($.seltype == RECTANGULAR), FALSE);
+	    $.selstate = SELECTED;
+	$else
+	    $.selstate = NO_SELECTION;
+    $elif btn == MBT_PASTE && (a == MA_CLICK)
+	request_paste($.frontend);
+    term_update(term);
+
+subcode: term_mouse_raw(btn, act)
+    $(set:code=tn_code)
+    $if $(btn)==MBT_LEFT
+	$(code)=0x20
+    $elif $(btn)==MBT_MIDDLE
+	$(code)=0x21
+    $elif $(btn)==MBT_RIGHT
+	$(code)=0x22
+    $elif $(btn)==MBT_WHEEL_UP
+	$(code)=0x60
+    $elif $(btn)==MBT_WHEEL_DOWN
+	$(code)=0x61
+    $else
+	$(code)=0
+
+    $if $(act)==MA_DRAG
+	$(code)+=0x20
+    $elif $(act)==MA_RELEASE
+	$(code)=0x23
+    $elif $(act)==MA_CLICK
+
+    $if tb_shift
+	$(code)+=0x04
+    $if tb_ctrl
+	$(code)+=0x10
+
+    $local ts_temp_buf[100]
+    sprintf(ts_temp_buf, "\033[M%c%c%c", encstate, x+33, y+33);
+    linedisc_send(ts_temp_buf, 6)
+
+subcode: term_mouse_extend_anchor
+    $if $.seltype == LEXICOGRAPHIC
+	$if posdiff(selpoint, $.selstart) < posdiff($.selend, $.selstart) / 2
+	    $.selanchor = $.selend;
+	    decpos($.selanchor);
+	$else
+	    $.selanchor = $.selstart;
+    $else
+	$if selpoint.x < ($.selstart.x + $.selend.x)/2
+	    $.selanchor.x = $.selend.x-1;
+	$else
+	    $.selanchor.x = $.selstart.x;
+
+	$if selpoint.y < ($.selstart.y + $.selend.y)/2
+	    $.selanchor.y = $.selend.y;
+	$else
+	    $.selanchor.y = $.selstart.y;
+    $.selstate = DRAGGING;
+
+subcode: term_mouse_drag
+    $if $.seltype == LEXICOGRAPHIC
+	$if poslt(selpoint, $.selanchor)
+	    $.selstart = selpoint;
+	    $.selend = $.selanchor;
+	    incpos($.selend);
+	$else
+	    $.selstart = $.selanchor;
+	    $.selend = selpoint;
+	    incpos($.selend);
+    $else
+	$.selstart.x = min($.selanchor.x, selpoint.x);
+	$.selend.x = 1+max($.selanchor.x, selpoint.x);
+	$.selstart.y = min($.selanchor.y, selpoint.y);
+	$.selend.y =   max($.selanchor.y, selpoint.y);

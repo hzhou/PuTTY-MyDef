@@ -1,0 +1,67 @@
+subcode: term_out_start_CSI
+    $.n_termstate = termstate_SEEN_CSI;
+    $.n_state_2=0
+    $.n_esc_args = 1
+    $.pn_esc_args[0] = 0
+    $.pn_esc_args[1] = 0
+
+subcode: term_out_SEEN_CSI
+    $if isdigit(c)
+	# argument
+	$if $.n_esc_args <= ARGS_MAX
+	    $.pn_esc_args[$.n_esc_args - 1] = 10 * $.pn_esc_args[$.n_esc_args - 1] + c - '0';
+    $elif c == ';'
+	# argument seperator
+	$if $.n_esc_args < ARGS_MAX
+	    $.pn_esc_args[$.n_esc_args++] = 0;
+    $elif $.n_state_2==0
+	$if c<'@'
+	    $.n_state_2=c
+	$else
+	    $.n_termstate = termstate_TOPLEVEL
+	    $switch c
+		$call switch_c, 'A', CUU
+		$call switch_c, 'B', CUD
+		$call switch_c, 'C', CUF
+		$call switch_c, 'D', CUB
+		$call switch_c, 'E', CNL
+		$call switch_c, 'F', CPL
+		$call switch_c, 'G', CHA
+		$call switch_c, 'H', CUP
+		$call switch_c, 'J', ED
+		$call switch_c, 'K', EL
+
+		$call switch_c, 'c', DA
+		$call switch_c, 'd', VPA
+		$call switch_c, 'f', HVP
+		$call switch_c, 'g', TBC
+		$call switch_c, 'h', MODE_HIGH_0
+		$call switch_c, 'i', MC  # Media Copy, Printing
+		$call switch_c, 'l', MODE_LOW_0
+		$call switch_c, 'm', SGR
+		$call switch_c, 'n', DSR
+
+		$call switch_c, 'r', DECSTBM
+		$call switch_c, 's', DECSC
+		$call switch_c, 'u', DECRC
+    $else
+	$.n_termstate = termstate_TOPLEVEL
+	# $call switch_2, '?', 'J', DECSED
+	# $call switch_2, '?', 'K', DECSEL
+	# $call switch_2, '?', 'c', DECDA
+	$call switch_2, '?', 'h', MODE_HIGH_1
+	# $call switch_2, '?', 'i', DECMC
+	$call switch_2, '?', 'l', MODE_LOW_1
+	# $call switch_2, '?', 'n', DECDSR
+	# $call switch_2, '?', 'r', DECCARA
+	# $call switch_2, '>', 'T', EEE
+	# $call switch_2, '>', 'c', EEE
+	# $call switch_2, '>', 'm', EEE
+	# $call switch_2, '>', 'n', EEE
+	# $call switch_2, '>', 'p', EEE
+	# $call switch_2, '>', 't', EEE
+
+subcode: switch_2(prefix, case, name)
+    $if $.n_state_2==$(prefix) && c==$(case)
+	$call term_do_$(name)
+

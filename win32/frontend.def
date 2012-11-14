@@ -1,0 +1,70 @@
+subcode:: function_list
+    $list get_ttymode, set_iconic, move_window, set_zorder, refresh_window, set_zoomed, is_iconic, get_window_pos, get_window_pixels, get_window_title, from_backend, from_backend_untrusted, frontend_keypress
+
+fncode: get_ttymode(void *frontend, const char *s_mode)
+    $return_type char *
+    ts_val=NULL
+    $if strcmp(s_mode, "ERASE")==0
+	ts_val=cfg.bksp_is_delete? "^?":"^H";
+    return dupstr(ts_val)
+
+fncode: set_iconic(void * frontend, b_iconic)
+    $if IsIconic(hwnd) && !b_iconic
+	ShowWindow(hwnd, SW_RESTORE);
+	windowMinimized = FALSE;
+    $elif !IsIconic(hwnd) && b_iconic
+	ShowWindow(hwnd, SW_MINIMIZE);
+	windowMinimized = TRUE;
+
+fncode: move_window(void * frontend, int x, int y)
+    $if cfg.resize_action == RESIZE_DISABLED || cfg.resize_action == RESIZE_FONT || IsZoomed(hwnd)
+       return;
+    $else
+	SetWindowPos(hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+
+fncode: set_zorder(void * frontend, b_top)
+    $if cfg.alwaysontop
+	return;			       /* ignore */
+    SetWindowPos(hwnd, b_top ? HWND_TOP : HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+
+fncode: refresh_window(void * frontend)
+    InvalidateRect(hwnd, NULL, TRUE);
+
+fncode: set_zoomed(void *frontend, b_zoomed)
+    $if IsZoomed(hwnd) && !b_zoomed
+	ShowWindow(hwnd, SW_RESTORE);
+    $elif !IsZoomed(hwnd) && b_zoomed
+	ShowWindow(hwnd, SW_MAXIMIZE);
+
+fncode: is_iconic(void *frontend)
+    $return_type int
+    return IsIconic(hwnd);
+
+fncode: get_window_pos(void *frontend, pn_x, pn_y)
+    $local RECT r;
+    GetWindowRect(hwnd, &r);
+    *pn_x = r.left;
+    *pn_y = r.top;
+
+fncode: get_window_pixels(void *frontend, pn_x, pn_y)
+    RECT r;
+    GetWindowRect(hwnd, &r);
+    *pn_x = r.right - r.left;
+    *pn_y = r.bottom - r.top;
+
+fncode: get_window_title(void *frontend, b_icon)
+    $if b_icon
+	return icon_name
+    $else
+	return window_name
+
+fncode: from_backend(void *frontend, int is_stderr, const char *data, int len)
+    $return_type int
+    return term_data(term, data, len);
+
+fncode: from_backend_untrusted(void *frontend, const char *data, int len)
+    $return_type int
+    return term_data_untrusted(term, data, len);
+
+fncode: frontend_keypress(void * handle)
+    return

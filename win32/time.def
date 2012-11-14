@@ -1,0 +1,71 @@
+
+# ---- Timer ---------------------------------------
+subcode:: function_list
+    $define(TIMING_TIMER_ID) 1234
+
+subcode: main_on_WM_TIMER    
+    $if (UINT_PTR)wparam == TIMING_TIMER_ID
+	KillTimer(hwnd, TIMING_TIMER_ID);
+	$call run_timers
+	$if timer_list.head
+	    timer_change_notify(timer_list.head->time_val)
+    return 0
+
+fncode: timer_change_notify(time_next)
+    tn_ticks = (int)(time_next - GETTICKCOUNT())
+    $if tn_ticks<=0
+	tn_ticks=1
+    KillTimer(hwnd, TIMING_TIMER_ID);
+    SetTimer(hwnd, TIMING_TIMER_ID, tn_ticks, NULL);
+    
+# ----
+subcode:: global
+    $register_prefix(time) long
+    $call slist_declare timer | time_now | timer_fn_t fn, void * ctx, time_val, s_name
+    $global struct timer_list timer_list
+
+    $list schedule_timer, expire_timer_context
+    $list timer_change_notify
+
+subcode:: main_init
+    $call slist_init, timer_list, time_now=GETTICKCOUNT()
+
+subcode: debug_timer_list
+    printf("  Debug: head: %p, tail %p, count: %d\n", timer_list.head, timer_list.tail, timer_list.n)
+    &call slist_each, timer_list
+	printf("  Debug: %p - %d\n", $(p)->fn, time_now-$(p)->time_val)
+
+# ----------------------------------------
+fncode: schedule_timer(tn_ticks, timer_fn_t fn, void *ctx)
+    $(set:member=time_val=time_when, fn=fn, ctx=ctx)
+    time_now=GETTICKCOUNT()
+    time_when = tn_ticks + time_now
+    $if tn_ticks<=0
+	fn(ctx, time_when)
+    $elif !timer_list.head || timer_list.head->time_val>time_when
+	$call slist_unshift, timer_list, $(member)
+	timer_change_notify(time_when);
+    $elif timer_list.tail->time_val<time_when
+	$call slist_push, timer_list, $(member)
+    $else
+	&call slist_each_2, timer_list
+	    $if $(p)->time_val>time_when
+		$call slist_insert_before, $(member)
+		break
+    # $call debug_timer_list
+    return time_when;
+
+subcode: run_timers
+    time_now=GETTICKCOUNT()
+    &call slist_head_pop, timer_list
+	$if $(p)->time_val<=time_now
+	    $(p)->fn($(p)->ctx, $(p)->time_val)
+	$else
+	    break
+    # $call debug_timer_list
+
+fncode: expire_timer_context(void * ctx)
+    &call slist_each_2, timer_list
+	$if $(p)->ctx==ctx
+	    $call slist_delete
+

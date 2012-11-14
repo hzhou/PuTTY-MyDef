@@ -1,0 +1,125 @@
+subcode:: function_list
+    $(set:color=Get$(1)Value(colours[i]))
+    $global HPALETTE pal
+    $global LPLOGPALETTE logpal
+    $list palette_set, palette_reset
+
+subcode:: WinMain_PreShow
+    pal = NULL;
+    logpal = NULL;
+    $call init_palette
+
+subcode:: WinMain_CleanUp
+    $if logpal
+	sfree(logpal)
+    $if pal
+	DeleteObject(pal)
+
+subcode: WM_PAINT_palette
+    $if pal
+	SelectPalette(hdc, pal, TRUE);
+	RealizePalette(hdc);
+
+# ---------------------------
+subcode: main_on_WM_PALETTECHANGED
+    $if (HWND) wparam != hwnd && pal != NULL
+	$call update_palette
+
+subcode: main_on_WM_QUERYNEWPALETTE
+    $if pal
+	$call update_palette
+	return 1
+    $else
+	return 0
+
+subcode: main_on_WM_SYSCOLORCHANGE
+    $if cfg.system_colour
+	$call get_system_colour
+	$call init_palette
+	term_invalidate(term);
+
+fncode: get_ctx(void *frontend)
+    $return_type Context
+    $local HDC hdc
+    $if hwnd
+	hdc=GetDC(hwnd)
+	$if hdc && pal
+	    SelectPalette(hdc, pal, FALSE);
+	return hdc
+    $else
+	return NULL
+
+fncode: free_ctx(Context ctx)
+    SelectPalette(ctx, GetStockObject(DEFAULT_PALETTE), FALSE);
+    ReleaseDC(hwnd, ctx);
+
+# -------------------------
+subcode: init_palette
+    HDC hdc = GetDC(hwnd);
+    $if hdc
+	$if cfg.try_palette && GetDeviceCaps(hdc, RASTERCAPS) & RC_PALETTE
+	    # -- init logpal --
+	    logpal = smalloc(sizeof(*logpal) - sizeof(logpal->palPalEntry) + NALLCOLOURS * sizeof(PALETTEENTRY));
+	    logpal->palVersion = 0x300;
+	    logpal->palNumEntries = NALLCOLOURS;
+	    $for i=0:NALLCOLOURS
+		logpal->palPalEntry[i].peRed = $(color:R)
+		logpal->palPalEntry[i].peGreen = $(color:G)
+		logpal->palPalEntry[i].peBlue = $(color:B)
+		logpal->palPalEntry[i].peFlags = PC_NOCOLLAPSE;
+	    # -- init pal --
+	    pal = CreatePalette(logpal);
+	    $if pal
+		SelectPalette(hdc, pal, FALSE);
+		RealizePalette(hdc);
+		SelectPalette(hdc, GetStockObject(DEFAULT_PALETTE), FALSE);
+	ReleaseDC(hwnd, hdc);
+    $if pal
+	$for i=0:NALLCOLOURS
+	    colours[i] = PALETTERGB($(color:R), $(color:G), $(color:B))
+
+# --------------------------------------------
+fncode: palette_set(void *frontend, tn_i, tn_r, tn_g, tn_b)
+    $call translate_color_index
+    $if pal
+	logpal->palPalEntry[tn_i].peRed = tn_r;
+	logpal->palPalEntry[tn_i].peGreen = tn_g;
+	logpal->palPalEntry[tn_i].peBlue = tn_b;
+	logpal->palPalEntry[tn_i].peFlags = PC_NOCOLLAPSE;
+	colours[tn_i] = PALETTERGB(tn_r, tn_g, tn_b);
+	SetPaletteEntries(pal, 0, NALLCOLOURS, logpal->palPalEntry);
+	HDC hdc = GetDC(hwnd)
+	SelectPalette(hdc, pal, FALSE)
+	UnrealizeObject(pal);
+	RealizePalette(hdc);
+	SelectPalette(hdc, GetStockObject(DEFAULT_PALETTE), FALSE)
+	ReleaseDC(hwnd, hdc)
+    $else
+	colours[tn_i] = RGB(tn_r, tn_g, tn_b);
+	$if tn_i == (ATTR_DEFBG>>ATTR_BGSHIFT)
+	    InvalidateRect(hwnd, NULL, TRUE);
+
+# --------------------------------------------
+fncode: palette_reset(void *frontend)
+    $for i=0:NALLCOLOURS
+	$if pal
+	    logpal->palPalEntry[i].peRed = $(color:R)
+	    logpal->palPalEntry[i].peGreen = $(color:G)
+	    logpal->palPalEntry[i].peBlue = $(color:B)
+	    logpal->palPalEntry[i].peFlags = 0;
+	    colours[i] = PALETTERGB($(color:R), $(color:G), $(color:B))
+
+    $if pal
+	SetPaletteEntries(pal, 0, NALLCOLOURS, logpal->palPalEntry);
+	$call update_palette
+    $else
+	InvalidateRect(hwnd, NULL, TRUE);
+
+subcode: update_palette
+    HDC hdc=GetDC(hwnd)
+    SelectPalette(hdc, pal, FALSE)
+    $if RealizePalette(hdc)
+	UpdateColors(hdc)
+    SelectPalette(hdc, GetStockObject(DEFAULT_PALETTE), FALSE)
+    ReleaseDC(hwnd, hdc)
+

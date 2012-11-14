@@ -1,0 +1,73 @@
+# #### Blinking #################################################
+subcode:: function_list
+    $list term_text_blink_on_timer, term_cursor_blink_on_timer
+    $list term_vbell_on_timer, term_update_on_timer
+
+subcode:: on_term_init
+    $map term_decl, int window_update_pending
+    $map term_decl, int cblinker, int tblinker, int in_vbell
+    $.window_update_pending=0
+
+    $define(VBELL_TIMEOUT) (TICKSPERSEC/10)
+    $define(TBLINK_DELAY)   ((TICKSPERSEC*9+19)/20)
+    $define(CBLINK_DELAY)   (CURSORBLINK)
+    $define(VBELL_DELAY)    (VBELL_TIMEOUT)
+    $define(UPDATE_DELAY)   ((TICKSPERSEC+49)/50)
+    $.cblinker = 0
+    $.tblinker = 0
+    $call term_start_text_blink
+    $call term_start_cursor_blink
+
+subcode:: on_term_power_on
+    $.in_vbell = FALSE;
+
+fncode: term_text_blink_on_timer(Terminal *term, long time_now)
+    $.tblinker = !$.tblinker;
+    schedule_timer(TBLINK_DELAY, term_text_blink_on_timer, term)
+    term_update(term)
+
+fncode: term_cursor_blink_on_timer(Terminal *term, long time_now)
+    $.cblinker = !$.cblinker;
+    schedule_timer(CBLINK_DELAY, term_cursor_blink_on_timer, term)
+    term_update(term)
+
+fncode: term_vbell_on_timer(Terminal *term, long time_now)
+    $.in_vbell=0
+    term_update(term)
+
+fncode: term_update_on_timer(Terminal *term, long time_now)
+    $.window_update_pending=0
+    term_update(term)
+
+# ----
+subcode: term_start_text_blink
+    # schedule_timer(TBLINK_DELAY, term_text_blink_on_timer, term)
+subcode: term_start_cursor_blink
+    # schedule_timer(CBLINK_DELAY, term_cursor_blink_on_timer, term)
+subcode: term_start_vbell
+    $if !$.in_vbell
+	$.in_vbell = 1
+	schedule_timer(VBELL_DELAY, term_vbell_on_timer, term)
+subcode: term_schedule_update
+    $if !$.window_update_pending
+	$.window_update_pending=1
+	schedule_timer(UPDATE_DELAY, term_update_on_timer, term)
+
+# ------------------
+subcode:: function_list
+    $list term_seen_key_event
+
+subcode:: on_term_init
+    $map term_decl, b_seen_disp_event
+    $.b_seen_disp_event=0
+
+subcode: seen_disp_event
+    $.b_seen_disp_event=1
+    $call term_schedule_update
+
+fncode: term_seen_key_event(Terminal *term)
+    $call @term_on_key_event
+    $if cfg.scroll_on_key
+	$.disptop = 0
+	$call seen_disp_event
+
