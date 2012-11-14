@@ -1,0 +1,92 @@
+include: c_darray.def
+
+subcode:: global
+    #$global char ** events
+    $call global_darray, char *, events
+    $global hwnd_log=NULL
+
+fncode: logevent(ts_msg)
+    log_eventlog(logctx, ts_msg);
+
+    $local struct tm tm
+    $local char timebuf[40]
+    tm=ltime()
+    strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S\t", &tm)
+
+    tn_size=strlen(timebuf) + strlen(ts_msg) + 1
+    $alloc(tn_size) ts_temp
+    strcpy(ts_temp, timebuf)
+    strcat(ts_temp, ts_msg)
+
+    $call darray_check, events
+    events[n_da_len_events++] = ts_temp
+
+    $if hwnd_log
+	SendDlgItemMessage(hwnd_log, list_Log, LB_ADDSTRING, 0, ts_temp)
+	n = SendDlgItemMessage(hwnd_log, list_Log, LB_GETCOUNT, 0, 0)
+	SendDlgItemMessage(hwnd_log, list_Log, LB_SETTOPINDEX, n-1, 0)
+
+fncode: showeventlog(HWND hwnd)
+    $if !hwnd_log
+	$call create_dialog, logbox, hwnd_log
+    SetActiveWindow(hwnd_log)
+
+# ---- logbox -------------------------
+resource: dialog_logbox
+    size: 100, 20, 300, 119
+    caption: PuTTY Event Log
+    button_Close
+	text: &Close
+	size: 135, 102, 44, 14
+	default: close
+    button_Copy
+	text: C&opy
+	size: 81, 102, 44, 14
+    list_Log
+	size: 3, 3, 294, 95
+	style: LBS_HASSTRINGS|LBS_USETABSTOPS|WS_VSCROLL|LBS_EXTENDEDSEL
+
+subcode: logbox_on_Close
+    hwnd_log = NULL
+    SetActiveWindow(GetParent(hwnd))
+    DestroyWindow(hwnd)
+
+subcode: logbox_on_WM_INITDIALOG
+    $local static int pn_logtabs[4]={78,108}
+    SendDlgItemMessage(hwnd, list_Log, LB_SETTABSTOPS, 2,(LPARAM)pn_logtabs)
+    $for i=0:n_da_len_events
+	SendDlgItemMessage(hwnd, list_Log, LB_ADDSTRING, 0, (LPARAM) events[i]);
+    return 1
+
+subcode: logbox_on_button_Copy
+    $if HIWORD(wParam) == BN_CLICKED || HIWORD(wParam) == BN_DOUBLECLICKED
+	int *selitems;
+	tn_count = SendDlgItemMessage(hwnd, list_Log, LB_GETSELCOUNT, 0, 0)
+	$if tn_count>0
+	    $call logbox_copy
+
+subcode:: global
+    $global unsigned char sel_nl[]={13,10}
+
+subcode: logbox_copy
+    $local_allocate(tn_count) pn_selitems
+    assert(pn_selitems)
+    tn_count = SendDlgItemMessage(hwnd, list_Log, LB_GETSELITEMS, tn_count, (LPARAM) pn_selitems)
+
+    tn_size = 0
+    $for i=0:tn_count
+	tn_size+=strlen(events[pn_selitems[i]]) + sizeof(sel_nl);
+    $local_allocate(tn_size) ts_clipdata
+    assert(ts_clipdata)
+    ts_p=ts_clipdata
+    $for i=0:tn_count
+	ts_q = events[pn_selitems[i]]
+	tn_len = strlen(ts_q)
+	memcpy(ts_p, ts_q, tn_len)
+	ts_p += tn_len
+	memcpy(ts_p, sel_nl, sizeof(sel_nl))
+	ts_p += sizeof(sel_nl)
+    write_aclip(NULL, ts_clipdata, tn_size, TRUE);
+
+    $for i=0:n_da_len_events
+	SendDlgItemMessage(hwnd, list_Log, LB_SETSEL, FALSE, i)

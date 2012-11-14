@@ -1,0 +1,54 @@
+include: macro/attr.def
+
+include: win32/main.def
+include: win32/commandline.def
+include: win32/wndproc.def
+include: win32/tray.def
+include: win32/util.def
+include: win32/font.def
+include: win32/clipboard.def
+include: win32/resize.def
+include: win32/other.def
+include: win32/frontend.def
+include: win32/menu.def
+include: win32/time.def
+include: win32/debug.def
+include: win32/keyboard.def
+#include: hack.def
+#include: mouse.def
+#include: palette.def
+include: win32/color.def
+
+include: front/line_discipline.def
+include: front/get_userpass.def
+include: front/paste.def
+
+subcode: assert(@cond)
+    $if ! ($(cond))
+	return 1
+
+# ----------------------------------------------------
+page: window_inc
+    output_dir: windows
+    subcode: main
+	$define(snprintf) sprintf_s
+	$declare HICON extract_icon(char *iconpath, int smallicon)
+	$declare void term_invalidate(TERM)
+	$declare void term_scroll(TERM, int, int)
+	$declare int term_data_untrusted(TERM, const char *, int)
+	$declare int term_data(TERM, const char *, int)
+	$call attr_defines
+	$call charset_defines
+	$include storage.h
+	$include win_res.h
+	$typedef void * TERM
+	$symbol char * appname
+	$call @global
+	$call @function_list
+	$list WinMain
+
+subcode:: global
+    $struct(tagWindow) HWND hwnd
+    $global struct tagWindow win
+    $(set:this=win.)
+

@@ -1,0 +1,422 @@
+include: macro/charset.def
+
+page: ucs_inc
+    output_dir: windows
+    subcode: main
+	$call function_list
+
+subcode:: function_list
+    $include assert
+    $define(lenof(x)) ((sizeof((x)))/(sizeof(*(x))))
+    $call charset_defines
+
+    $global int font_isdbcs
+    $global int font_codepage
+    $global int line_codepage
+
+    $list cp_enumerate, cp_name, decode_codepage
+    $list wc_to_mb, mb_to_wc, is_dbcs_leadbyte
+
+#######################################################################
+# ---- Codepage -------------------------------
+fncode: cp_enumerate(n_index)
+    $return_type const char *
+    $if n_index<0 || n_index >= lenof(cp_list)
+	return NULL
+    $else
+	return cp_list[n_index].name
+
+fncode: cp_name(n_codepage)
+    $return_type const char *
+    $local const struct cp_list_item *cpi
+    $local const struct cp_list_item *cpno
+    $local static char ts_buf[32]
+
+    $if n_codepage == -1
+	sprintf(ts_buf, "Use font encoding")
+	return ts_buf
+
+    $if n_codepage > 0 && n_codepage < 65536
+	sprintf(ts_buf, "CP%03d", n_codepage);
+    $else
+	*ts_buf = 0;
+
+    $if n_codepage >= 65536
+	$if (n_codepage-65536)<lenof(cp_list)
+	    cpno=cp_list+(n_codepage-65536)
+	    $for cpi = cp_list; cpi->name; cpi++
+		$if cpno->cp_table == cpi->cp_table
+		    return cpi->name;
+	$else
+	    cpno = 0;
+    $else
+	$for cpi = cp_list; cpi->name; cpi++
+	    $if n_codepage == cpi->codepage
+		return cpi->name;
+    return ts_buf
+
+fncode: decode_codepage(s_codepage)
+    $local tn_codepage=-1
+    $local CPINFO cpinfo
+
+    $if !*s_codepage
+	$call codepage_default
+    $if s_codepage && *s_codepage
+	$call codepage_match
+    $if s_codepage && *s_codepage
+	$call codepage_number
+
+    return_codepage:
+    $if tn_codepage != -1
+	$if tn_codepage != CP_UTF8 && tn_codepage < 65536
+	    $if GetCPInfo(tn_codepage, &cpinfo) == 0
+		tn_codepage = -2;
+	    $elif cpinfo.MaxCharSize > 1
+		tn_codepage = -3;
+    $if tn_codepage == -1 && *s_codepage
+	tn_codepage = -2
+    return tn_codepage
+
+# ----
+subcode: codepage_default
+    tn_cp = GetACP();
+    $switch tn_cp
+        case 1250: s_codepage = "ISO-8859-2"; break;
+        case 1251: s_codepage = "KOI8-U"; break;
+        case 1252: s_codepage = "ISO-8859-1"; break;
+        case 1253: s_codepage = "ISO-8859-7"; break;
+        case 1254: s_codepage = "ISO-8859-9"; break;
+        case 1255: s_codepage = "ISO-8859-8"; break;
+        case 1256: s_codepage = "ISO-8859-6"; break;
+        case 1257: s_codepage = "ISO-8859-13"; break;
+	/* default: leave it blank, which will select -1, direct->font */
+
+subcode: codepage_match
+    $local const struct cp_list_item *cpi
+    $for cpi = cp_list; cpi->name; cpi++
+	ts_s1 = s_codepage;
+	ts_s2 = cpi->name;
+	$while 1
+	    $while *ts_s1 && !isalnum(*ts_s1) && *ts_s1 != ':'
+		ts_s1++;
+	    $while *ts_s2 && !isalnum(*ts_s2) && *ts_s2 != ':'
+		ts_s2++;
+	    $if *ts_s1 == 0
+		# match
+		tn_codepage = cpi->codepage;
+		$if tn_codepage == CP_UTF8
+		    goto return_codepage
+		$if tn_codepage == -1
+		    return -1
+		$if tn_codepage == 0
+		    tn_codepage = 65536 + (cpi - cp_list);
+		    goto return_codepage
+
+		$if GetCPInfo(tn_codepage, &cpinfo) != 0
+		    goto return_codepage
+	    $if tolower(*ts_s1++) != tolower(*ts_s2++)
+		break
+
+subcode: codepage_number
+    ts_s1 = s_codepage
+    $if tolower(ts_s1[0]) == 'c' && tolower(ts_s1[1]) == 'p'
+	ts_s1 += 2
+    $if tolower(ts_s1[0]) == 'i' && tolower(ts_s1[1]) == 'b' && tolower(ts_s1[2]) == 'm'
+	ts_s1 += 3;
+    for(ts_s2 = ts_s1; *ts_s2 >= '0' && *ts_s2 <= '9'; ts_s2++);
+    $if *ts_s2 == 0 && ts_s2 != ts_s1
+	tn_codepage = atoi(ts_s1)
+
+    $if tn_codepage == 0
+	tn_codepage = GetACP()
+    $if tn_codepage == 1
+	tn_codepage = GetOEMCP()
+    $if tn_codepage > 65535
+	tn_codepage = -2
+
+# ----
+fncode: wc_to_mb(n_codepage, wchar_t *wbuf, int wlen, char *sbuf, int slen)
+    $return_type int
+    $call @check_uni_tbl
+    return WideCharToMultiByte(n_codepage, 0, wbuf, wlen, sbuf, slen, NULL, NULL);
+
+fncode: mb_to_wc(n_codepage, n_flags, char *sbuf, int slen, wchar_t *wbuf, int wlen)
+    $return_type int
+    return MultiByteToWideChar(n_codepage, n_flags, sbuf, slen, wbuf, wlen);
+
+fncode: is_dbcs_leadbyte(n_codepage, char byte)
+    $return_type int
+    return IsDBCSLeadByteEx(n_codepage, byte);
+
+##### Line Drawing Console Map #####################################
+subcode:: function_list
+    $global wchar_t unitab_scoacs[256];
+    $global wchar_t unitab_line[256];
+    $global wchar_t unitab_font[256];
+    $global wchar_t unitab_draw[256];
+    $global wchar_t unitab_oemcp[256];
+    $global unsigned char unitab_ctrl[256];
+
+    $list get_unitab, link_font
+    $list update_ucs_charset, update_ucs_line_codepage, update_ucs_linedraw
+
+# ---- Init ------------------------------------------------------------------
+fncode: update_ucs_charset(DWORD n_cs)
+    $if n_cs == OEM_CHARSET
+	font_codepage = GetOEMCP();
+    $else
+	$local CHARSETINFO info_charset
+	memset(&info_charset, 0xFF, sizeof(info_charset))
+	$if TranslateCharsetInfo ((DWORD *) n_cs, &info_charset, TCI_SRCCHARSET)
+	    font_codepage = info_charset.ciACP;
+	$else
+	    font_codepage = -1;
+
+    $if font_codepage <= 0
+	font_codepage=0; 
+	font_isdbcs=0; 
+    $else
+	$local CPINFO info_cp
+	GetCPInfo(font_codepage, &info_cp);
+	font_isdbcs = (info_cp.MaxCharSize > 1);
+
+fncode: update_ucs_line_codepage(s_codepage)
+    line_codepage = decode_codepage(s_codepage)
+
+fncode: update_ucs_linedraw(n_vtmode)
+    $if n_vtmode == VT_OEMONLY
+	font_codepage = 437;
+	font_isdbcs = 0;
+	$if line_codepage <= 0
+	    line_codepage = GetACP();
+    $elif line_codepage <= 0
+	line_codepage = font_codepage;
+
+    $call unitab_font_update
+    $call unitab_oemcp_update
+    $call unitab_scoacs_update
+    $call unitab_line_update
+    $call unitab_draw_update
+    $call @generate_uni_tbl
+    $call unitab_ctrl_update
+    /* Generate line->screen direct conversion links. */
+    $if n_vtmode == VT_OEMANSI || n_vtmode == VT_XWINDOWS
+	link_font(unitab_scoacs, unitab_oemcp, CSET_OEMCP);
+
+    link_font(unitab_line, unitab_font, CSET_ACP);
+    link_font(unitab_scoacs, unitab_font, CSET_ACP);
+    link_font(unitab_draw, unitab_font, CSET_ACP);
+
+    $if n_vtmode == VT_OEMANSI || n_vtmode == VT_XWINDOWS
+	link_font(unitab_line, unitab_oemcp, CSET_OEMCP);
+	link_font(unitab_draw, unitab_oemcp, CSET_OEMCP);
+
+    $if font_isdbcs && font_codepage != line_codepage
+	unitab_line['\\'] = CSET_OEMCP + '\\';
+
+    $if n_vtmode != VT_UNICODE
+	$call unitab_poorman
+
+# ------------------------------------------------------------------
+fncode: link_font(wchar_t * tbl_line, wchar_t *tbl_font, wchar_t n_attr)
+    # selectively copy to tbl_line
+    $for tn_i=0:256
+	$if DIRECT_FONT(tbl_line[tn_i])
+	    continue
+	$else
+	    $for i=0:256
+		tn_j = ((32 + i) & 0xFF);
+		$if tbl_line[tn_i] == tbl_font[tn_j]
+		    tbl_line[tn_i] = (wchar_t) (n_attr + tn_j)
+		    break;
+
+fncode: get_unitab(n_codepage, wchar_t * unitab, n_type)
+    tn_max = 256
+    $if n_type == 2
+	tn_max = 128
+
+    # -- UTF, trivial
+    $if n_codepage == CP_UTF8
+	$for i=0:tn_max
+	    unitab[i] = i;
+	return;
+
+    $if n_codepage == CP_ACP
+	n_codepage = GetACP()
+    $elif n_codepage == CP_OEMCP
+	n_codepage = GetOEMCP()
+
+    $if n_codepage > 0 && n_codepage < 65536
+	# translate
+	tn_flg = MB_ERR_INVALID_CHARS;
+	$if n_type
+	    tn_flg |= MB_USEGLYPHCHARS;
+	$for i = 0:tn_max
+	    $local char tbuf[4]
+	    tbuf[0] = i;
+	    $if mb_to_wc(n_codepage, tn_flg, tbuf, 1, unitab + i, 1) != 1
+		unitab[i] = 0xFFFD;
+    $else
+	# copy from specified in cp_list
+	j = 256 - cp_list[n_codepage & 0xFFFF].cp_size;
+	$for i = 0:j
+	    unitab[i] = i;
+	$for i = j:tn_max
+	    unitab[i] = cp_list[n_codepage & 0xFFFF].cp_table[i - j];
+
+# ==== unitab_font == Direct to Font Map ==================================
+subcode: unitab_font_update
+    $if font_isdbcs || font_codepage == 0
+	get_unitab(font_codepage, unitab_font, 2);
+	$for i=128:256
+	    # apply direct-to-font mask
+	    unitab_font[i] = (WCHAR) (CSET_ACP + i);
+    $else
+	get_unitab(font_codepage, unitab_font, 1);
+	$if font_codepage == 437
+	    unitab_font[0] = unitab_font[255] = 0xFFFF;
+
+    $if n_vtmode == VT_XWINDOWS
+	memcpy(unitab_font + 1, unitab_draw_std, sizeof(unitab_draw_std));
+
+# ==== unitab_oemcp ==  ==================================
+subcode: unitab_oemcp_update
+    get_unitab(CP_OEMCP, unitab_oemcp, 1);
+
+# ==== unitab_scoacs ==  ==================================
+subcode: unitab_scoacs_update
+    $if n_vtmode == VT_OEMANSI || n_vtmode == VT_XWINDOWS
+	memcpy(unitab_scoacs, unitab_oemcp, sizeof(unitab_scoacs));
+    $else
+	get_unitab(437, unitab_scoacs, 1);
+
+# ==== unitab_line ==  ==================================
+subcode: unitab_line_update
+    $if line_codepage == font_codepage && (font_isdbcs || n_vtmode == VT_POORMAN || font_codepage==0)
+	/* For DBCS and POOR fonts force direct to font */
+	tb_used_dtf = 1;
+	$for i=0:32
+	    unitab_line[i] = (WCHAR) i;
+	$for i=32:256
+	    unitab_line[i] = (WCHAR) (CSET_ACP + i);
+	unitab_line[127] = (WCHAR) 127;
+    $else
+	get_unitab(line_codepage, unitab_line, 0);
+
+# ==== unitab_draw =======================================================
+subcode: unitab_draw_update
+    /* VT100 graphics - NB: Broken for non-ascii CP's */
+    memcpy(unitab_draw, unitab_line, sizeof(unitab_draw));
+    # 96 - 0x60 - '`'
+    memcpy(unitab_draw + '`', unitab_draw_std, sizeof(unitab_draw_std));
+    # 95 - 0x59 - '_'
+    unitab_draw['_'] = ' ';
+
+# ==== unitab_ctrl =======================================================
+subcode: unitab_ctrl_update
+    $for i=0:256
+	$if unitab_line[i] < ' ' || (unitab_line[i] >= 0x7F && unitab_line[i] < 0xA0)
+	    unitab_ctrl[i] = i;
+	$else
+	    unitab_ctrl[i] = 0xFF;
+
+# ==== unitab_ctrl =======================================================
+subcode: unitab_poorman
+    $localinit static const char poorman_scoacs[]="CueaaaaceeeiiiAAE**ooouuyOUc$YPsaiounNao?++**!<>###||||++||++++++--|-+||++--|-+----++++++++##||#aBTPEsyt******EN=+><++-=... n2* "
+    $localinit static const char poorman_latin1[]=" !cL.Y|S\"Ca<--R~o+23'u|.,1o>///?AAAAAAACEEEEIIIIDNOOOOOxOUUUUYPBaaaaaaaceeeeiiiionooooo/ouuuuypy"
+    $localinit static const char poorman_vt100[] = "*#****o~**+++++-----++++|****L."
+
+    $for i=160:256
+	$if !DIRECT_FONT(unitab_line[i]) && unitab_line[i] >= 160 && unitab_line[i] < 256
+	    unitab_line[i] = (wchar_t) (CSET_ACP + poorman_latin1[unitab_line[i] - 160]);
+    $for i = 96:127
+	$if !DIRECT_FONT(unitab_draw[i])
+	    unitab_draw[i] =(wchar_t) (CSET_ACP + poorman_vt100[i - 96]);
+    $for i=128:256 
+	$if !DIRECT_FONT(unitab_scoacs[i])
+	    unitab_scoacs[i] = (wchar_t) (CSET_ACP + poorman_scoacs[i - 128])
+
+# ==== uni_tbl ============================================================
+subcode: clear_uni_tbl
+    $for i=0:256
+	$if uni_tbl[i]
+	    free(uni_tbl[i])
+    free(uni_tbl);
+    uni_tbl = 0;
+
+subcode: generate_uni_tbl
+    $global char ** uni_tbl
+    $if uni_tbl
+	$call clear_uni_tbl
+
+    $if !tb_used_dtf
+	$for i=0:256
+	    $if DIRECT_CHAR(unitab_line[i])
+		continue;
+	    $if DIRECT_FONT(unitab_line[i])
+		continue;
+	    $if !uni_tbl
+		$allocate(256) uni_tbl
+		memset(uni_tbl, 0, 256 * sizeof(char *));
+	    j = ((unitab_line[i] >> 8) & 0xFF);
+	    $if !uni_tbl[j] 
+		$allocate(256) uni_tbl[j]
+		memset(uni_tbl[j], 0, 256 * sizeof(char));
+	    uni_tbl[j][unitab_line[i] & 0xFF] = i;
+
+#fncode: wc_to_mb(n_codepage, wchar_t *wbuf, int wlen, char *sbuf, int slen)
+subcode: check_uni_tbl
+    $if n_codepage == line_codepage && uni_tbl
+	$if wlen < 0
+	    for(wlen = 0; wbuf[wlen++] ;);
+	$local char * p
+	p=sbuf
+	$for i=0:wlen
+	    wchar_t ch = wbuf[i];
+	    char * p1= uni_tbl[(ch >> 8) & 0xFF]
+	    $if p1 && p1[ch & 0xFF]
+		*p++ = p1[ch&0xFF]
+	    $elif ch < 0x80
+		*p++ = (char) ch;
+	    $else
+		*p++ = '.';
+	    assert(p - sbuf < slen)
+	return p - sbuf;
+
+#######################################################################
+# ---- unicode -------------------------------
+fncode: check_compose_internal(tn_c1, tn_c2, tb_direct)
+    $return_type int
+    $local struct compose_item *p_item;
+
+    $for p_item=compose_tbl; p_item->c1; p_item++
+	$if (p_item->c1 == tn_c1 && p_item->c2 == tn_c2)
+	    return p_item->composed;
+
+    $if tb_direct == 0
+	tn_ret = check_compose_internal(tn_c2, tn_c1, 1);
+	$if tn_ret == -1
+	    tn_ret = check_compose_internal(toupper(tn_c1), toupper(tn_c2), 1);
+	$if tn_ret == -1
+	    tn_ret = check_compose_internal(toupper(tn_c2), toupper(tn_c1), 1);
+    return tn_ret
+
+fncode: check_compose(tn_c1, tn_c2)
+    $return_type int
+    return check_compose_internal(tn_c1, tn_c2, 0)
+
+fncode: wordtype(tn_code)
+    $local const struct wordtype_item *p_item
+    $call decode_cset_1, tn_code
+    $call decode_cset_2, tn_code
+
+    $if font_isdbcs && font_codepage == line_codepage
+	return (tn_code != ' ');
+    $elif tn_code < 0x80
+	return cfg.wordness[tn_code]
+    $else
+	$for p_item = wordtype_tbl; p_item->start; p_item++
+	    $if tn_code >= p_item->start && tn_code <= p_item->end
+		return p_item->ctype;
+    return 2
+
