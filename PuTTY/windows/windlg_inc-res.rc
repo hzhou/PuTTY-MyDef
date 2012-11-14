@@ -1,0 +1,43 @@
+#include "windlg_inc-res.h"
+
+IDI_MAINICON ICON "putty.ico"
+
+IDI_CFGICON ICON "puttycfg.ico"
+
+dialog_about DIALOG DISCARDABLE 140, 40, 214, 70
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About PuTTY, MyDef Version"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    DEFPUSHBUTTON "&Close", button_Close, 160, 52, 48, 14
+    PUSHBUTTON "View &License", button_License, 6, 52, 70, 14
+    PUSHBUTTON "Visit &Web Site", button_Web, 84, 52, 70, 14
+    CTEXT "PuTTY, MyDef Fork", text_Title, 10, 6, 194, 8
+    CTEXT "text_Version", text_Version, 10, 16, 194, 16
+    CTEXT "\251 1997-2011 Simon Tatham. All rights reserved.", text_CopyRight, 10, 34, 194, 16
+END
+
+dialog_config DIALOG DISCARDABLE 0, 0, 300, 262
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "PuTTY Configuration"
+FONT 8, "MS Shell Dlg"
+CLASS "PuTTYConfigBox"
+BEGIN
+END
+
+dialog_logbox DIALOG 100, 20, 300, 119
+STYLE WS_POPUP | WS_BORDER
+CAPTION "PuTTY Event Log"
+BEGIN
+    DEFPUSHBUTTON "&Close", button_Close, 135, 102, 44, 14
+    PUSHBUTTON "C&opy", button_Copy, 81, 102, 44, 14
+    LISTBOX list_Log, 3, 3, 294, 95, LBS_HASSTRINGS|LBS_USETABSTOPS|WS_VSCROLL|LBS_EXTENDEDSEL
+END
+
+dialog_license DIALOG 50, 50, 226, 263
+STYLE WS_POPUP | WS_BORDER
+CAPTION "PuTTY License"
+BEGIN
+    DEFPUSHBUTTON "OK", button_OK, 98, 243, 44, 14
+    LTEXT "\251 1997-2011 Simon Tatham. All rights reserved.", text_License, 10, 10, 206, 200
+END

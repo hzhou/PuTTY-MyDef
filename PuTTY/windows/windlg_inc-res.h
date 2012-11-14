@@ -1,0 +1,16 @@
+#define IDI_MAINICON 0x1010
+#define IDI_CFGICON 0x1020
+#define dialog_about 0x1030
+#define button_Close 0x1010
+#define button_License 0x1020
+#define button_Web 0x1030
+#define text_Title 0x1040
+#define text_Version 0x1050
+#define text_CopyRight 0x1060
+#define dialog_config 0x1040
+#define dialog_logbox 0x1050
+#define button_Copy 0x1070
+#define list_Log 0x1080
+#define dialog_license 0x1060
+#define button_OK 0x1090
+#define text_License 0x10a0
