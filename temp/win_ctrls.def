@@ -1,0 +1,191 @@
+# set dlg_hwnd and dlg_inst 
+
+subcode: dlg_rect(x, y, w, h)
+    $local RECT rct_temp
+    rct_temp.left = $(x)
+    rct_temp.top = $(y)
+    rct_temp.right = rct_temp.left + $(w)
+    rct_temp.bottom = rct_temp.top + $(h)
+    MapDialogRect($(dlg_hwnd), &rct_temp)
+    $(export:xywh=rct_temp.left,rct_temp.right,rct_temp.right-rct_temp.left,rct_temp.bottom-rct_temp.top)
+
+# ------------------------------------------
+subcode: create_ctrl(name, x, y, w, h, class, text, style, exstyle)
+    $call dlg_rect, $(x), $(y), $(w), $(h)
+    $local HWND h_temp
+    h_temp = CreateWindowEx($(exstyle), $(class), $(text), $(style), $(xywh), $(dlg_hwnd), (HMENU) $(name), $(dlg_inst), NULL);
+    SendMessage(h_temp, WM_SETFONT, tn_font, MAKELPARAM(TRUE, 0))
+
+# ------------------------------------------
+subcode: create_groupbox(name, x, y, w, h, label)
+    $call create_ctrl, $(name), $(x), $(y), $(w), $(h), "BUTTON", $(label), WS_CHILD|WS_VISIBLE|BS_GROUPBOX, 0
+
+subcode: create_paneltitle(name, x, y, w, h, label)
+    $call create_ctrl, $(name), $(x), $(y), $(w), $(h), "STATIC", $(label), WS_CHILD|WS_VISIBLE|SS_OWNERDRAW, 0
+
+subcode: create_static(name, x, y, w, h, label)
+    $call create_ctrl, $(name), $(x), $(y), $(w), $(h), "STATIC", $(label), WS_CHILD|WS_VISIBLE, 0
+
+subcode: create_treeview(name, x, y, w, h)
+    $(set:wstyle=WS_CHILD | WS_VISIBLE | WS_TABSTOP)
+    $(set:cstyle=TVS_HASLINES | TVS_DISABLEDRAGDROP | TVS_HASBUTTONS | TVS_LINESATROOT |TVS_SHOWSELALWAYS)
+    $call create_ctrl, $(name), $(x), $(y), $(w), $(h), WC_TREEVIEW, "", $(wstyle)|$(cstyle), 0
+
+# ==== OGDL ==========================================
+subcode: config_fill_treeview(hwnd)
+    $local TVINSERTSTRUCT struct_tvins
+    $local HTREEITEM hti_0 = TVI_ROOT
+    $(ogdl_load:config_category)
+    $(ogdl_path_init)
+    $(ogdl_set_path:0=config)
+    $(list_init:configpath)
+    $call config_fill_treeview_ogdl
+
+subcode: config_fill_treeview_ogdl
+    $(allow_recurse:10)
+    $(eval:level=recurse+1)
+    $local HTREEITEM hti_$(level)
+    hti_$(level)=0
+    $(ogdl_each)
+	$(ogdl_get:name=_name)
+	$(ogdl_set_path:$(level)=$(name))
+	$(ogdl_path:$(level))
+	$(list_set:configpath,$(path_index)=$(path))
+	struct_tvins.hParent = hti_$(recurse)
+	struct_tvins.hInsertAfter=hti_$(level)
+	struct_tvins.item.mask = TVIF_TEXT | TVIF_PARAM
+	struct_tvins.pszText = "$(name)"
+	struct_tvins.cchTextMax = $(name:len)+1
+	struct_tvins.lParam =  $(path_index)
+	hti_$(level)=TreeView_InsertItem($(hwnd), &struct_tvins)
+	$(if:recurse=1)
+	    TreeView_Expand($(hwnd), hti_$(recurse), TVE_EXPAND)
+	$(elif:recurse>1)
+	    TreeView_Expand($(hwnd), hti_$(recurse), TVE_COLLAPSE)
+	$(if:ogdl_list)
+	    $call config_fill_treeview_ogdl
+
+subcode: config_init_panel_setup(path_index)
+    $call config_init_panel, hwnd
+    $switch $(path_index)
+	$(list_each:configpath)
+	    case $(idx):
+		$(ogdl_load:$(val))
+		// $(val)
+		$call config_init_panel_ogdl
+		break
+
+subcode: config_init_panel_ogdl
+    # do box title
+    $call config_init_panel_title
+    $(allow_recurse:10)
+    $(ogdl_each)
+	$(ogdl_get:name=_name)
+	$(if:name=group)
+	    $call config_init_panel_group_begin
+	    $call config_init_panel_ogdl
+	    $call config_init_panel_group_end
+	$(elif:name=column)
+	    $(ogdl_get:size)
+	    # do column size
+	    $(ogdl_each)
+		# do col size
+		$call config_init_panel_column
+	$(elif:name=button)
+	    $call config_init_panel_button
+	$(elif:name=editbox)
+	    $call config_init_panel_editbox
+	$(elif:name=radio)
+	    $call config_init_panel_radio
+	$(elif:name=file)
+	    $call config_init_panel_file
+	$(elif:name=text)
+	    $call config_init_panel_text
+
+# --------------------------------------------
+subcode: config_init_dialog_setup(dlg_hwnd)
+    tn_font=SendMessage($(dlg_hwnd), WM_GETFONT, 0, 0)
+
+subcode: config_init_panel_setup(dlg_hwnd)
+    $(export:GAPBETWEEN=3)
+    $(export:GAPWITHIN=1)
+    $(export:GAPXBOX=7)
+    $(export:GAPYBOX=4)
+    $(export:DLGWIDTH=168)
+    $(export:STATICHEIGHT=8)
+    $(export:TITLEHEIGHT=12)
+    $(export:CHECKBOXHEIGHT=8)
+    $(export:RADIOHEIGHT=8)
+    $(export:EDITHEIGHT=12)
+    $(export:LISTHEIGHT=11)
+    $(export:LISTINCREMENT=8)
+    $(export:COMBOHEIGHT=12)
+    $(export:PUSHBTNHEIGHT=14)
+    $(export:PROGBARHEIGHT=14)
+    $(export:ICONHEIGHT=20)
+
+    tn_panel_left=100
+    tn_panel_right=3
+    tn_panel_top=13
+
+    $local RECT rct_dlg
+    GetClientRect($(dlg_hwnd), &rct_dlg)
+    $call dlg_rect, 0, 0, 4, 8
+    tn_dlu4inpix=rct_temp.right
+    tn_base_id=IDCX_PANELBASE
+
+    tn_font=SendMessage($(dlg_hwnd), WM_GETFONT, 0, 0)
+
+    tn_panel_x=tn_panel_left
+    tn_panel_y=tn_panel_top
+    tn_panel_w=4*rct_dlg.right/tn_dlu4inpix
+    tn_panel_w-= (tn_panel_left+tn_panel_right)
+    tn_panel_w-= 2*$(GAPBETWEEN)
+
+subcode: config_init_panel_title
+    $(ogdl_get:title)
+    $global s_config_panel_title
+    s_config_panel_title="$(title)"
+    $resource_define IDC_PANELTITLE
+    $call create_paneltitle, IDC_PANELTITLE, tn_panel_x+$(GAPBETWEEN), tn_panel_y, tn_panel_w, $(TITLEHEIGHT), s_config_panel_title
+    tn_panel_y+=$(TITLEHEIGHT)+$(GAPBETWEEN)
+
+
+subcode: config_init_panel_group_begin
+    tn_panel_box_y=tn_panel_y
+    $(if:ogdl_attr:title)
+	tn_panel_y+=$(STATICHEIGHT)
+    $(else)
+	tn_panel_box_y-=$(STATICHEIGHT)/2
+    tn_panel_y+=$(GAPYBOX)
+    tn_panel_x+=$(GAPXBOX)
+    tn_panel_w-= 2*$(GAPXBOX)
+
+subcode: config_init_panel_group_end
+    tn_panel_y+=$(GAPYBOX) - $(GAPBETWEEN)
+    tn_panel_x-=$(GAPXBOX)
+    tn_panel_w+= 2*$(GAPXBOX)
+    $(ogdl_get:title)
+    $resource_define IDC_DUMMY
+    $call create_groupbox, $(IDC_DUMMY), tn_panel_x+$(GAPBETWEEN), tn_panel_box_y, tn_panel_w, tn_panel_y-tn_panel_box_y, "$(title)"
+    tn_panel_y+=$(GAPYBOX)
+
+
+subcode: config_clear_panel
+    int k;
+    HWND item;
+    struct winctrl *c;
+
+    while ((c = winctrl_findbyindex(&ctrls_panel, 0)) != NULL) {
+	for (k = 0; k < c->num_ids; k++) {
+	    item = GetDlgItem(hwnd, c->base_id + k);
+	    if (item)
+		DestroyWindow(item);
+	}
+	winctrl_rem_shortcuts(&dp, c);
+	winctrl_remove(&ctrls_panel, c);
+	sfree(c->data);
+	sfree(c);
+    }
+
+# ============================================================

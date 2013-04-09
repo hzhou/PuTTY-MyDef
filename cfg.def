@@ -1,0 +1,6 @@
+include: c_hash.def
+
+subcode: init_cfg
+    $global p_config
+    p_config=hash_new(200)
+
