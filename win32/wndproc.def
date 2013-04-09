@@ -4,10 +4,10 @@ subcode:: function_list
 #---- System -------------------------------------------------------
 subcode: main_on_WM_CLOSE
     show_mouseptr(1);
-    $tempstr "$appname Exit Confirmation"
+    $eval tempstr, "$appname Exit Confirmation"
     $if !cfg.warn_on_close || session_closed
 	DestroyWindow(hwnd)
-    $elif MessageBox(hwnd, "Are you sure you want to close this session?", ts_temp_buf, MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON1) == IDOK
+    $elif MessageBox(hwnd, "Are you sure you want to close this session?", $(tempstr), MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON1) == IDOK
 	DestroyWindow(hwnd)
     return 0;
 

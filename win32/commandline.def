@@ -1,3 +1,13 @@
+subcode: old_do_config
+    $local b_allow_launch=0
+    # $call process_commandline
+    $if !b_allow_launch || !cfg_launchable(&cfg)
+	tn_ret=do_config()
+	$if !tn_ret
+	    cleanup_exit(0)
+
+    $call process_cfg_hostname
+
 subcode: process_commandline
     $symbol int default_protocol, int default_port
 

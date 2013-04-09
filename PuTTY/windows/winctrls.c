@@ -104,56 +104,6 @@ HWND doctl(struct ctlpos *cp, RECT r,
 }
 
 /*
- * A title bar across the top of a sub-dialog.
- */
-void bartitle(struct ctlpos *cp, char *name, int id)
-{
-    RECT r;
-
-    r.left = GAPBETWEEN;
-    r.right = cp->width;
-    r.top = cp->ypos;
-    r.bottom = STATICHEIGHT;
-    cp->ypos += r.bottom + GAPBETWEEN;
-    doctl(cp, r, "STATIC", WS_CHILD | WS_VISIBLE, 0, name, id);
-}
-
-/*
- * Begin a grouping box, with or without a group title.
- */
-void beginbox(struct ctlpos *cp, char *name, int idbox)
-{
-    cp->boxystart = cp->ypos;
-    if (!name)
-	cp->boxystart -= STATICHEIGHT / 2;
-    if (name)
-	cp->ypos += STATICHEIGHT;
-    cp->ypos += GAPYBOX;
-    cp->width -= 2 * GAPXBOX;
-    cp->xoff += GAPXBOX;
-    cp->boxid = idbox;
-    cp->boxtext = name;
-}
-
-/*
- * End a grouping box.
- */
-void endbox(struct ctlpos *cp)
-{
-    RECT r;
-    cp->xoff -= GAPXBOX;
-    cp->width += 2 * GAPXBOX;
-    cp->ypos += GAPYBOX - GAPBETWEEN;
-    r.left = GAPBETWEEN;
-    r.right = cp->width;
-    r.top = cp->boxystart;
-    r.bottom = cp->ypos - cp->boxystart;
-    doctl(cp, r, "BUTTON", BS_GROUPBOX | WS_CHILD | WS_VISIBLE, 0,
-	  cp->boxtext ? cp->boxtext : "", cp->boxid);
-    cp->ypos += GAPYBOX;
-}
-
-/*
  * A static line, followed by a full-width edit box.
  */
 void editboxfw(struct ctlpos *cp, int password, char *text,
@@ -472,22 +422,6 @@ void statictext(struct ctlpos *cp, char *text, int lines, int id)
     doctl(cp, r, "STATIC",
 	  WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
 	  0, text, id);
-}
-
-/*
- * An owner-drawn static text control for a panel title.
- */
-void paneltitle(struct ctlpos *cp, int id)
-{
-    RECT r;
-
-    r.left = GAPBETWEEN;
-    r.top = cp->ypos;
-    r.right = cp->width;
-    r.bottom = TITLEHEIGHT;
-    cp->ypos += r.bottom + GAPBETWEEN;
-    doctl(cp, r, "STATIC", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
-	  0, NULL, id);
 }
 
 /*
@@ -1768,7 +1702,7 @@ int winctrl_handle_command(struct dlgparam *dp, UINT msg,
     if (draglistmsg == WM_NULL)
 	draglistmsg = RegisterWindowMessage (DRAGLISTMSGSTRING);
 
-    if (msg != draglistmsg && msg != WM_COMMAND && msg != WM_DRAWITEM)
+    if (msg != draglistmsg && msg != WM_COMMAND)
 	return 0;
 
     /*
@@ -1783,27 +1717,6 @@ int winctrl_handle_command(struct dlgparam *dp, UINT msg,
     if (!c)
 	return 0;		       /* we have nothing to do */
 
-    if (msg == WM_DRAWITEM) {
-	/*
-	 * Owner-draw request for a panel title.
-	 */
-	LPDRAWITEMSTRUCT di = (LPDRAWITEMSTRUCT) lParam;
-	HDC hdc = di->hDC;
-	RECT r = di->rcItem;
-	SIZE s;
-
-	SetMapMode(hdc, MM_TEXT);      /* ensure logical units == pixels */
-
-	GetTextExtentPoint32(hdc, (char *)c->data,
-				 strlen((char *)c->data), &s);
-	DrawEdge(hdc, &r, EDGE_ETCHED, BF_ADJUST | BF_RECT);
-	TextOut(hdc,
-		r.left + (r.right-r.left-s.cx)/2,
-		r.top + (r.bottom-r.top-s.cy)/2,
-		(char *)c->data, strlen((char *)c->data));
-
-	return TRUE;
-    }
 
     ctrl = c->ctrl;
     id = LOWORD(wParam) - c->base_id;

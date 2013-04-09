@@ -44,74 +44,6 @@ static struct dlgparam dp;
 
 #define PRINTER_DISABLED_STRING "None (printing disabled)"
 
-void force_normal(HWND hwnd)
-{
-    static int recurse = 0;
-
-    WINDOWPLACEMENT wp;
-
-    if (recurse)
-	return;
-    recurse = 1;
-
-    wp.length = sizeof(wp);
-    if (GetWindowPlacement(hwnd, &wp) && wp.showCmd == SW_SHOWMAXIMIZED) {
-	wp.showCmd = SW_SHOWNORMAL;
-	SetWindowPlacement(hwnd, &wp);
-    }
-    recurse = 0;
-}
-
-
-
-/*
- * Null dialog procedure.
- */
-static int CALLBACK NullDlgProc(HWND hwnd, UINT msg,
-				WPARAM wParam, LPARAM lParam)
-{
-    return 0;
-}
-
-enum {
-    IDCX_ABOUT = IDC_ABOUT,
-    IDCX_TVSTATIC,
-    IDCX_TREEVIEW,
-    IDCX_STDBASE,
-    IDCX_PANELBASE = IDCX_STDBASE + 32
-};
-
-struct treeview_faff {
-    HWND treeview;
-    HTREEITEM lastat[4];
-};
-
-static HTREEITEM treeview_insert(struct treeview_faff *faff,
-				 int level, char *text, char *path)
-{
-    TVINSERTSTRUCT ins;
-    int i;
-    HTREEITEM newitem;
-    ins.hParent = (level > 0 ? faff->lastat[level - 1] : TVI_ROOT);
-    ins.hInsertAfter = faff->lastat[level];
-#if _WIN32_IE >= 0x0400 && defined NONAMELESSUNION
-#define INSITEM DUMMYUNIONNAME.item
-#else
-#define INSITEM item
-#endif
-    ins.INSITEM.mask = TVIF_TEXT | TVIF_PARAM;
-    ins.INSITEM.pszText = text;
-    ins.INSITEM.cchTextMax = strlen(text)+1;
-    ins.INSITEM.lParam = (LPARAM)path;
-    newitem = TreeView_InsertItem(faff->treeview, &ins);
-    if (level > 0)
-	TreeView_Expand(faff->treeview, faff->lastat[level - 1],
-			(level > 1 ? TVE_COLLAPSE : TVE_EXPAND));
-    faff->lastat[level] = newitem;
-    for (i = level + 1; i < 4; i++)
-	faff->lastat[i] = NULL;
-    return newitem;
-}
 
 /*
  * Create the panelfuls of controls in the configuration box.
@@ -150,22 +82,6 @@ static void create_controls(HWND hwnd, char *path)
 void show_help(HWND hwnd)
 {
     launch_help(hwnd, NULL);
-}
-
-void defuse_showwindow(void)
-{
-    /*
-     * Work around the fact that the app's first call to ShowWindow
-     * will ignore the default in favour of the shell-provided
-     * setting.
-     */
-    {
-	HWND hwnd;
-	hwnd = CreateDialog(hinst, MAKEINTRESOURCE(dialog_about), NULL, NullDlgProc);
-	ShowWindow(hwnd, SW_HIDE);
-	SetActiveWindow(hwnd);
-	DestroyWindow(hwnd);
-    }
 }
 
 /* ************************************************************ */

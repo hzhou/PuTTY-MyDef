@@ -73,8 +73,8 @@ fncode: do_beep
 	$if !PlaySound(cfg.bell_wavefile.path, NULL, SND_ASYNC | SND_FILENAME)
 	    $local char buf[sizeof(cfg.bell_wavefile.path) + 80];
 	    sprintf(buf, "Unable to play sound file\n%s\n" "Using default sound instead", cfg.bell_wavefile.path);
-	    $tempstr "$appname Sound Error"
-	    MessageBox(hwnd, buf, ts_temp_buf, MB_OK | MB_ICONEXCLAMATION);
+	    $eval tempstr, "$appname Sound Error"
+	    MessageBox(hwnd, buf, $(tempstr), MB_OK | MB_ICONEXCLAMATION);
 	    cfg.beep = BELL_DEFAULT;
     $else
 	$if b_has_focus

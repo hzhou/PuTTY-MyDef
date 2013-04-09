@@ -17,14 +17,7 @@ fncode: WinMain
     init_help()
     $call init_COM
 
-    $global Config cfg
-    $local b_allow_launch=0
-    $call process_commandline
-    $if !b_allow_launch || !cfg_launchable(&cfg)
-	tn_ret=do_config()
-	$if !tn_ret
-	    cleanup_exit(0)
-    $call process_cfg_hostname
+    $call load_cfg_default
 
     $call register_window
     $call create_window
@@ -221,18 +214,18 @@ fncode: start_backend
     ts_err=back->init(NULL, &backhandle, &cfg, cfg.host, cfg.port, &ts_realhost, cfg.tcp_nodelay, cfg.tcp_keepalives)
     back->provide_logctx(backhandle,  logctx)
     $if ts_err
-	$tempstr "$appname Error"
+	$eval tempstr, "$appname Error"
 	$local ts_msg_buf[1024]
 	snprintf(ts_msg_buf, 1024, "Unable to open connection to\n%.800s\n%s", cfg_dest(&cfg), ts_err)
-	MessageBox(NULL, ts_msg_buf, ts_temp_buf, MB_ICONERROR|MB_OK)
+	MessageBox(NULL, ts_msg_buf, $(tempstr), MB_ICONERROR|MB_OK)
     # window title
     window_name=NULL
     icon_name=NULL
     $if *cfg.wintitle
 	ts_title=cfg.wintitle
     $else
-	$tempstr "$ts_realhost - $appname"
-	ts_title=ts_temp_buf
+	$eval tempstr, "$ts_realhost - $appname"
+	ts_title=$(tempstr)
     set_title(NULL, ts_title)
     set_icon(NULL, ts_title)
     sfree(ts_realhost)
@@ -313,8 +306,8 @@ subcode: error_box(title, type)
     va_start(ap, fmt);
     ts_msg = dupvprintf(fmt, ap)
     va_end(ap);
-    $tempstr $(title)
-    MessageBox(hwnd, ts_msg, ts_temp_buf, $(type))
+    $eval tempstr, $(title)
+    MessageBox(hwnd, ts_msg, $(tempstr), $(type))
     sfree(ts_msg);
 
 fncode: cmdline_error(fmt)
