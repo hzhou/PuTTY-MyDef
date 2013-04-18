@@ -53,11 +53,6 @@ typedef struct backend_tag Backend;
  *
  */
 
-#define TATTR_ACTCURS 	    0x40000000UL      /* active cursor (block) */
-#define TATTR_PASCURS 	    0x20000000UL      /* passive cursor (box) */
-#define TATTR_RIGHTCURS	    0x10000000UL      /* cursor-on-RHS */
-#define TATTR_COMBINING	    0x80000000UL      /* combining characters */
-
 #define DATTR_STARTRUN      0x80000000UL   /* start of redraw run */
 
 #define TDATTR_MASK         0xF0000000UL
@@ -373,39 +368,6 @@ enum {
     ADDRTYPE_UNSPEC, ADDRTYPE_IPV4, ADDRTYPE_IPV6, ADDRTYPE_NAME
 };
 
-struct backend_tag {
-    const char *(*init) (void *frontend_handle, void **backend_handle,
-			 Config *cfg,
-			 char *host, int port, char **realhost, int nodelay,
-			 int keepalive);
-    void (*free) (void *handle);
-    /* back->reconfig() passes in a replacement configuration. */
-    void (*reconfig) (void *handle, Config *cfg);
-    /* back->send() returns the current amount of buffered data. */
-    int (*send) (void *handle, char *buf, int len);
-    /* back->sendbuffer() does the same thing but without attempting a send */
-    int (*sendbuffer) (void *handle);
-    void (*size) (void *handle, int width, int height);
-    void (*special) (void *handle, Telnet_Special code);
-    const struct telnet_special *(*get_specials) (void *handle);
-    int (*connected) (void *handle);
-    int (*exitcode) (void *handle);
-    /* If back->sendok() returns FALSE, data sent to it from the frontend
-     * may be lost. */
-    int (*sendok) (void *handle);
-    int (*ldisc) (void *handle, int);
-    void (*provide_ldisc) (void *handle, void *ldisc);
-    void (*provide_logctx) (void *handle, void *logctx);
-    /*
-     * back->unthrottle() tells the back end that the front end
-     * buffer is clearing.
-     */
-    void (*unthrottle) (void *handle, int);
-    int (*cfg_info) (void *handle);
-    char *name;
-    int protocol;
-    int default_port;
-};
 
 extern Backend *backends[];
 

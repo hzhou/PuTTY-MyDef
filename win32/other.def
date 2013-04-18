@@ -2,7 +2,6 @@
 subcode:: function_list
     $list do_beep
     $list set_title, set_icon, front_set_scrollbar
-    $list paint_start, paint_finish
 
 fncode: set_title(void *frontend, ts_title)
     sfree(window_name);
@@ -33,20 +32,6 @@ fncode: front_set_scrollbar(tn_total, tn_pos, tn_pagesize)
     si.nPos = tn_pos
     $if hwnd
 	SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
-
-# ----
-fncode: paint_start
-    $global HDC cur_hdc=0
-    $if hwnd
-	cur_hdc=GetDC(hwnd)
-	return 1
-    $else
-	cur_hdc=0
-	return 0
-
-fncode: paint_finish
-    $if cur_hdc
-	ReleaseDC(hwnd, cur_hdc);
 
 # ----
 subcode: default_beep

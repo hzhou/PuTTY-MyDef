@@ -4,9 +4,7 @@ subcode:: function_list
 
     # $define(ECHOING) (cfg.localecho==FORCE_ON||(cfg.localecho==AUTO&&(back->ldisc(backhandle,LD_ECHO))))
     # $define(EDITING) (cfg.localedit==FORCE_ON||(cfg.localedit==AUTO&&(back->ldisc(backhandle,LD_EDIT))))
-    $define(ECHOING) cfg.localecho==FORCE_ON
-    $define(EDITING) cfg.localedit==FORCE_ON
-    $define(in_utf) line_codepage==CP_UTF8
+    #$define(in_utf) line_codepage==CP_UTF8
 
 subcode: c_write(buf, len)
     term_data(term, $(buf), $(len))
@@ -16,17 +14,15 @@ subcode:: function_list
     $global s_ldisc_buf=NULL, n_ldisc_len=0, n_ldisc_size=0
     $global b_ldisc_quotenext=0
     $global b_ldisc_special
+    $define(EDITING) 0
+    $define(ECHOING) 0
+    $define(in_utf) 1
     $list ldisc_update, linedisc_send, linedisc_send_special, ldisc_edit
     $list get_plen, do_pwrite
 
 subcode: line_discipline_init
-    $(set:ldisc=(void *)1)
-    $if back
-	back->provide_ldisc(backhandle, $(ldisc))
 
 subcode: line_discipline_free
-    $if back
-	back->provide_ldisc(backhandle, NULL);
     $if s_ldisc_buf
 	sfree(s_ldisc_buf)
 
@@ -51,7 +47,7 @@ fncode: linedisc_send_special(s_buf, n_len)
 	b_ldisc_special=0x100
 	ldisc_edit(s_buf, n_len)
 	b_ldisc_special=0
-    $elif cfg.protocol == PROT_TELNET && n_len == 1
+    $elif strcmp(back->name(), "telnet")==0 && n_len == 1
 	$call ldisc_telnet_special
     $else
 	back->send(backhandle, s_buf, n_len)

@@ -1,10 +1,11 @@
 # ---- Char Out ----------------------------------------
 subcode:: on_term_init
-    $map term_decl, int wrap, int insert
+    $map term_decl, int wrap, int insert, int cjk_ambig_wide
     $.wrap=1
+    $.cjk_ambig_wide=1
 
 subcode:: on_term_power_on
-    $.wrap = cfg.wrap_mode
+    $call get_config, "wrap_mode", $.wrap, 1
     $.insert = 0
 
 subcode: term_do_CHAR
@@ -14,7 +15,7 @@ subcode: term_do_CHAR
     $if DIRECT_CHAR(c)
 	tn_width = 1
     $else
-	tn_width = (cfg.cjk_ambig_wide ?  mk_wcwidth_cjk((wchar_t) c) : mk_wcwidth((wchar_t) c));
+	tn_width = ($.cjk_ambig_wide ?  mk_wcwidth_cjk((wchar_t) c) : mk_wcwidth((wchar_t) c));
 
     # -- next line ----
     $if $.wrapnext && $.wrap && tn_width > 0 
@@ -109,11 +110,14 @@ subcode: term_do_S1
 subcode: term_do_S0
     $.cset=0
 
+subcode:: term_init
+    $call term_get_config, "no_dbackspace", b_no_dbackspace, 1
+
 subcode: term_do_DEL
     $if $.curs.x && !$.wrapnext
 	$.curs.x--;
     $.wrapnext = FALSE;
-    $if !cfg.no_dbackspace
+    $if !$.b_no_dbackspace
 	check_boundary(term, $.curs.x, $.curs.y);
 	check_boundary(term, $.curs.x+1, $.curs.y);
 	$call get_screen_line, $.curs.y, p_line
@@ -146,36 +150,33 @@ subcode: term_do_HT
     $call @check_deselect(old_curs, $.curs)
 
 subcode: term_do_LF_only
-    $if $.curs.y == $.marg_b
-	scroll(term, $.marg_t, $.marg_b, 1, TRUE)
+    $if $.curs.y == $.rows - 1
+	$call scroll_down_one
     $elif $.curs.y < $.rows - 1
 	$.curs.y++
-    $.wrapnext = FALSE;
-
-subcode: term_do_RI_only
-    $if $.curs.y == $.marg_t
-	scroll(term, $.marg_t, $.marg_b, -1, TRUE)
-    $elif $.curs.y > 0
-	$.curs.y--
     $.wrapnext = FALSE;
 
 subcode: term_do_CR_only
     $.curs.x = 0;
     $.wrapnext = FALSE;
 
+subcode:: term_init
+    $call term_get_config, "crhaslf", b_crhaslf, 0
+    $call term_get_config, "lfhascr", b_lfhascr, 0
+
 subcode: term_do_CR
     $call seen_disp_event
-    $if cfg.crhaslf
+    $if $.b_crhaslf
 	$call term_do_LF_only
     $call term_do_CR_only
-    $call term_out_log_traffic
+    $call @term_out_log_traffic
 
 subcode: term_do_LF
     $call seen_disp_event
     $call term_do_LF_only
-    $if cfg.lfhascr
+    $if $.b_lfhascr
 	$call term_do_CR_only
-    $call term_out_log_traffic
+    $call @term_out_log_traffic
 
 subcode: term_do_FF
     $call term_do_LF
@@ -196,14 +197,8 @@ subcode: term_do_NEL
     $call seen_disp_event
     $call term_do_LF_only
     $call term_do_CR_only
-subcode: term_do_RI
-    $call seen_disp_event
-    $call term_do_RI_only
 subcode: term_do_DECID
     $call term_ans_type
-subcode: term_do_RIS
-    $call seen_disp_event
-    power_on(term, TRUE)
 
 subcode: term_do_HTS
     $.pc_tabs[$.curs.x]=1
@@ -259,16 +254,13 @@ subcode: term_do_CHA
     move_cursor(term, $.pn_esc_args[0] - 1, $.curs.y, 0);
     $call seen_disp_event
 # ----
-subcode:: on_term_power_on
-    $call term_decl, int dec_om
-    $.dec_om = cfg.dec_om
 subcode: term_do_VPA
     $call term_ESC_default, 1
-    move_cursor(term, $.curs.x, (($.dec_om ? $.marg_t : 0) + $.pn_esc_args[0] - 1), ($.dec_om ? 2 : 0));
+    move_cursor(term, $.curs.x, ( $.pn_esc_args[0] - 1), 0)
     $call seen_disp_event
 subcode: term_do_CUP
     $call term_ESC_default_2, 1, 1
-    move_cursor(term, $.pn_esc_args[1] - 1, (($.dec_om ? $.marg_t : 0) + $.pn_esc_args[0] - 1), ($.dec_om ? 2 : 0));
+    move_cursor(term, $.pn_esc_args[1]-1, $.pn_esc_args[0]-1,  0)
     $call seen_disp_event
 subcode: term_do_HVP
     $call term_do_CUP
@@ -287,17 +279,7 @@ subcode: term_do_EL
     $call seen_disp_event
 
 subcode: term_do_DECSTBM
-    $call term_ESC_default_2, 1, $.rows
-    tn_top = $.pn_esc_args[0] - 1;
-    tn_bot = $.pn_esc_args[1] - 1;
-    $if tn_bot >= $.rows
-	tn_bot = $.rows - 1;
-    $if tn_bot - tn_top > 0
-	$.marg_t = tn_top
-	$.marg_b = tn_bot
-	$.curs.x = 0
-	$.curs.y = tn_top
-	$call seen_disp_event
+    # set margin, do not support
 
 # ---- Mode -----------------------------------
 subcode: term_decl_0(var)
@@ -404,4 +386,18 @@ subcode: set_color_256
 	    $call set_attr_fg, $.curr_attr, tn_color_idx
 	$else
 	    $call set_attr_bg, $.curr_attr, tn_color_idx
+
+subcode: match_color_216(r, g, b, n)
+    $call match_color_6, $(r), tn_r
+    $call match_color_6, $(g), tn_g
+    $call match_color_6, $(b), tn_b
+    $(n)=tn_r*36+tn_g*6+tn_b
+
+subcode: match_color_6(r, n)
+    $(n)=(($(r))-55+20)/40
+    $if $(n)<0
+	$(n)=0
+    $if $(n)>5
+	$(n)=5
+
 # ----

@@ -141,7 +141,7 @@ subcode: sel_spread_word_left
 		break;
 	$else
 	    $local termline *p_line2;
-	    tn_topy = -sblines(term);
+	    tn_topy = -$.n_scrollback_count
 	    $if p.y <= tn_topy
 		break;
 	    p_line2 = lineptr(term, p.y-1)
@@ -196,27 +196,32 @@ subcode: term_mouse_fit_pos
     $if x<0 && y>0
 	x=$.cols-1
 	y--
-    $call fit_range, y, 0, $.rows-1
-    $call fit_range, x, 0, $.cols-1
+    $call fit_range, y, 0, $.rows
+    $call fit_range, x, 0, $.cols
 
     selpoint.x = x
     selpoint.y = y + $.disptop
 
     $call @bidi_adjust_x, selpoint.x, y
 
+subcode:: term_init
+    $call term_get_config, "no_mouse_rep", b_no_mouse_rep, 0
+    $call term_get_config, "mouse_override", b_mouse_override, 0
+    $call term_get_config, "rect_select", b_rect_select, 0
+
 fncode: term_mouse(Terminal *term, Mouse_Button btn, Mouse_Action a, int x, int y, tb_shift, tb_ctrl, tb_alt)
 {
-    tb_raw= ($.xterm_mouse && !cfg.no_mouse_rep && !(cfg.mouse_override && tb_shift));
+    tb_raw= ($.xterm_mouse && !$.no_mouse_rep && !($.mouse_override && tb_shift));
     $call term_mouse_fit_pos
     $if tb_raw && ($.selstate != ABOUT_TO) && ($.selstate != DRAGGING)
-	$call fit_range, x, 0, $.cols-1
-	$call fit_range, y, 0, $.rows-1
+	$call fit_range, x, 0, $.cols
+	$call fit_range, y, 0, $.rows
 	$call term_mouse_raw, braw, a
 	return;
     $else
 	btn=translate_button(btn)
 
-    $if !tb_alt ^ !cfg.rect_select
+    $if !tb_alt ^ !$.b_rect_select
 	tn_default_seltype = RECTANGULAR;
     $else
 	tn_default_seltype = LEXICOGRAPHIC;

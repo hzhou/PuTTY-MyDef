@@ -1,4 +1,16 @@
 subcode: attr_defines
+    $define(DATTR_STARTRUN) 0x80000000U
+
+    $define(TATTR_ACTCURS)   0x40000000U
+    $define(TATTR_PASCURS)   0x20000000U
+    $define(TATTR_RIGHTCURS) 0x10000000U
+    $define(TATTR_COMBINING) 0x80000000U
+
+    $define(TATTR_LINE) 0x0F000000U
+    $define(TATTR_WIDE) 0x01000000U
+    $define(TATTR_TOP)  0x02000000U
+    $define(TATTR_BOT)  0x03000000U
+
     $define(ATTR_INVALID) 0x03FFFFU
     # 6 bit attributes
     $define(ATTR_NARROW)  0x800000U
@@ -26,34 +38,6 @@ subcode: attr_defines
     $define(ATTR_DEFFG) (COLOR_DEFFG<<ATTR_FGSHIFT)
     $define(ATTR_DEFBG) (COLOR_DEFBG<<ATTR_BGSHIFT)
     $define(ATTR_DEFAULT) (ATTR_DEFFG | ATTR_DEFBG)
-
-# ----
-subcode: fill_color_216(list, offset)
-    $local pc_color6[]={0,95,135,175,215,255}
-    tn_i=$(offset)
-    $for tn_r=0:6
-	$for tn_g=0:6
-	    $for tn_b=0:6
-		$(list)[tn_i]=RGB(pc_color6[tn_r], pc_color6[tn_g], pc_color6[tn_b])
-		tn_i++
-
-subcode: fill_gray_24(list, offset)
-    $for tn_i=0:24
-	tn_shade=tn_i*10+8
-	$(list)[tn_i+$(offset)]=RGB(tn_shade, tn_shade, tn_shade)
-
-subcode: match_color_6(r, n)
-    $(n)=(($(r))-55+20)/40
-    $if $(n)<0
-	$(n)=0
-    $if $(n)>5
-	$(n)=5
-
-subcode: match_color_216(r, g, b, n)
-    $call match_color_6, $(r), tn_r
-    $call match_color_6, $(g), tn_g
-    $call match_color_6, $(b), tn_b
-    $(n)=tn_r*36+tn_g*6+tn_b
 
 # ----
 subcode: set_attr_fg(attr, n)

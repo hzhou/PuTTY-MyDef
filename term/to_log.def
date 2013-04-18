@@ -11,11 +11,11 @@ fncode: term_provide_logctx(Terminal *term, void *logctx)
 
 # ----
 subcode:: term_out_flush
-    $if cfg.logflush && $.logctx
+    $if $.logctx
     	logflush($.logctx);
 
 subcode: term_out_log_debug
-    $if cfg.logtype == LGTYP_DEBUG && $.logctx
+    $if $.logctx
 	logtraffic($.logctx, (unsigned char) c, LGTYP_DEBUG);
 
 subcode: term_out_log_ascii

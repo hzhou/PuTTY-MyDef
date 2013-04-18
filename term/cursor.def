@@ -1,7 +1,6 @@
 subcode:: on_term_init
     $map term_decl, pos curs, int cset_attr[2] 
     $map decl_int, default_attr
-    $map decl_int, marg_t, marg_b
     $map decl_int, curr_attr, wrapnext, cset, utf, sco_acs
     $map decl_save, curr_attr, wrapnext, cset, utf, sco_acs
     $map term_decl, pos save_curs, int save_csattr
@@ -22,23 +21,15 @@ subcode:: on_term_power_on
     $.sco_acs = 0
     $call save_cursor
 
-    $.marg_t=0
-    $if $.rows>0
-	$.marg_b=$.rows-1
-    $else
-	$.marg_b=0
-
     $if $.screen
 	$if tb_clear
 	    $call erase_screen_2
 	$.curs.y = find_last_nonempty_line(term, $.screen) + 1;
 	$if $.curs.y == $.rows
 	    $.curs.y--;
-	    scroll(term, 0, $.rows - 1, 1, TRUE);
+	    $call scroll_down_one
 
 subcode:: on_term_size_after
-    $.marg_t = 0;
-    $.marg_b = n_row - 1;
     $.wrapnext = 0
     $.curs.y += tn_cursor_adjust
     $.save_curs.y += tn_cursor_adjust
@@ -69,29 +60,23 @@ subcode: decl_save(name)
 # ---------------------------------------- 
 subcode: fit_margin(y, n_marg_clip)
     $if $(n_marg_clip)==2
-	$call fit_range, $(y), $.marg_t, $.marg_b
+	$call fit_range, $(y), 0, $.rows
     $elif $(n_marg_clip)
-	$if ($.curs.y >= $.marg_t) && $(y) < $.marg_t
-	    $(y) = $.marg_t;
-	$if ($.curs.y <= $.marg_b) && $(y) > $.marg_b
-	    $(y) = $.marg_b;
+	$if ($.curs.y >= 0) && $(y) < 0
+	    $(y) = 0
+	$if ($.curs.y <= $.rows-1) && $(y) > $.rows-1
+	    $(y) = $.rows-1
 
 # ---------------------------------------- 
-subcode: fit_range(var, a, b)
-    $if $(var)<$(a)
-	$(var)=$(a)
-    $elif $(var)>$(b)
-	$(var)=$(b)
-
 subcode: fit_pos_range(var)
-    $call fit_range, $(var).x, 0, $.cols-1
-    $call fit_range, $(var).y, 0, $.rows-1
+    $call fit_range, $(var).x, 0, $.cols
+    $call fit_range, $(var).y, 0, $.rows
 
 # ------------------------------------------------
 fncode: move_cursor(Terminal *term, int x, int y, n_marg_clip)
-    $call fit_range, x, 0, $.cols-1
+    $call fit_range, x, 0, $.cols
     $call fit_margin, y, n_marg_clip
-    $call fit_range, y, 0, $.rows-1
+    $call fit_range, y, 0, $.rows
     $.curs.x = x
     $.curs.y = y
     $.wrapnext = 0

@@ -1,5 +1,4 @@
 subcode:: global
-    $include tree234.h
     $struct(pos) int x, int y
     $struct(termchar) unsigned long chr, unsigned long attr, int cc_next
     $struct(termline) unsigned short lattr, int cols, int size, int cc_free, struct termchar *chars
@@ -10,10 +9,10 @@ subcode:: global
     $global Terminal g_term
 
 subcode:: function_list
-    $map term_decl, int cols, int rows, tree234 *screen
+    $map term_decl, int cols, int rows, struct clist * screen
     $list term_init, term_free, power_on
 
-fncode: term_init(Config * mycfg)
+fncode: term_init
     $return_type Terminal *
     $local Terminal * term
     term = &g_term
@@ -37,7 +36,7 @@ subcode:: function_list
     $list term_size
 
 subcode: screen_init
-    $.screen=newtree234(NULL)
+    $call clist_create, $.screen
     $.rows=0
 
 fncode: term_size(Terminal *term, n_row, n_col)
@@ -51,6 +50,7 @@ fncode: term_size(Terminal *term, n_row, n_col)
 	n_row = 1
     $if n_col < 1 
 	n_col = 1
+    $call clist_expand, $.screen, n_row
 
     $call @on_term_size_before
 
@@ -79,12 +79,12 @@ fncode: term_size(Terminal *term, n_row, n_col)
 # --------
 subcode: term_size_insert_scrollback
     $call scrollback_pop, p_line
-    addpos234($.screen, p_line, 0);
+    $call clist_unshift, $.screen, p_line
     $.rows ++
     tn_cursor_adjust++
 
 subcode: term_size_push_scrollback
-    p_line = delpos234($.screen, 0);
+    $call clist_shift, $.screen, p_line
     $call scrollback_push, p_line
     $call freeline, p_line
     $.rows --
@@ -92,13 +92,14 @@ subcode: term_size_push_scrollback
 
 # ----
 subcode: term_size_add_blank
-    p_line = newline(term, n_col, FALSE);
-    addpos234($.screen, p_line, count234($.screen));
+    $call newline, n_col, $.basic_erase_char
+    $call clist_push, $.screen, p_line
     $.rows ++
 
 subcode: term_size_del_blank
-    p_line =delpos234($.screen, $.rows-1);
-    sfree(p_line);
+    $call clist_pop, $.screen, p_line
+    $call freeline, p_line
+    #free(p_line)
     $.rows --
 
 # ----

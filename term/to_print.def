@@ -1,18 +1,19 @@
 # ###### ANSI printing ##############################################
 subcode:: on_term_init
-    $map term_decl, bufchain printer_buf, printer_job *p_print_job
-    bufchain_init(&$.printer_buf);
+    $map term_decl, struct bufchain_list printer_buf, printer_job *p_print_job
     $.p_print_job = NULL;
+    $call bufchain_init, $.printer_buf
+
+subcode: to_print_finish
+    $if $.p_print_job
+	printer_finish_job($.p_print_job);
+    $call bufchain_clear, $.printer_buf
 
 subcode:: on_term_power_on
-    $if $.p_print_job
-	printer_finish_job($.p_print_job);
-    bufchain_clear(&$.printer_buf)
+    $call to_print_finish
 
 subcode:: on_term_finish
-    $if $.p_print_job
-	printer_finish_job($.p_print_job);
-    bufchain_clear(&$.printer_buf)
+    $call to_print_finish
 
 subcode: term_do_MC
     $if $.n_esc_args==1
@@ -30,8 +31,8 @@ subcode: term_out_printing
 	$call term_print_finish
     $else
 	$if $.n_state_2>0
-	    bufchain_add(&$.printer_buf, "\033[4i", $.n_state_2)
-	bufchain_add(&$.printer_buf, &c, 1);
+	    $call bufchain_add, $.printer_buf, "\033[4i", $.n_state_2
+	$call bufchain_add, $.printer_buf, &c, 1
 	$.n_state_2 = 0
 
 subcode:: term_out_flush
@@ -39,7 +40,7 @@ subcode:: term_out_flush
 	$call term_print_flush
 
 subcode: term_print_start
-    bufchain_clear(&$.printer_buf);
+    $call bufchain_clear, $.printer_buf
     $.p_print_job = printer_start_job(cfg.printer);
     $.n_state_2=0
     $.n_termstate=termstate_PRINTING
@@ -51,10 +52,5 @@ subcode: term_print_finish
     $.n_termstate = termstate_TOPLEVEL
 
 subcode: term_print_flush
-    $local void * tp_tmp_data, tn_tmp_len
-    tn_tmp_size=bufchain_size(&$.printer_buf)
-    $while tn_tmp_size>0
-	bufchain_prefix(&$.printer_buf, &tp_tmp_data, &tn_tmp_len)
-	printer_job_data($.p_print_job, tp_tmp_data, tn_tmp_len);
-	bufchain_consume(&$.printer_buf, tn_tmp_len);
-	tn_tmp_size=bufchain_size(&$.printer_buf)
+    &call bufchain_chunk_loop, $.printer_buf
+	printer_job_data($.p_print_job, ts_tmp, tn_len);

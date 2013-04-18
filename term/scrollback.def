@@ -2,19 +2,10 @@ include: term/compressline.def
 
 subcode:: function_list
     $list term_set_scrollback_size, term_clrsb
-    $list sblines, scroll, lineptr, unlineptr
-
-subcode: tree234_clear(var)
-    $while 1
-	p_line = delpos234($(var), 0)
-	$if p_line==NULL
-	    break
-	BLOCK
-    sfree($(var))
-    $(var)=NULL
+    $list lineptr, unlineptr
 
 subcode:: on_term_finish
-    &call tree234_clear, $.screen
+    &call clist_free, $.screen, p_line
 	$call freeline, p_line
 
 # ============================================================
@@ -22,20 +13,22 @@ fncode: term_set_scrollback_size(Terminal * term, n_save)
     $call scrollback_resize, n_save
 
 subcode:: on_term_init
-    $map term_decl, tree234 *p_scrollback, n_scrollback_count, n_scrollback_size
+    $map term_decl, struct clist * p_scrollback, n_scrollback_count, n_scrollback_size
     $.p_scrollback=NULL
     $.n_scrollback_count = 0;
+    $call scrollback_resize, 100
 
 subcode:: on_term_finish
-    &call tree234_clear, $.p_scrollback
-	sfree(p_line)
+    &call clist_free, $.p_scrollback, ts_line
+	free(ts_line)
 
 # ----
 subcode: scrollback_resize(n)
     $if !$.p_scrollback
-	$.p_scrollback=newtree234(NULL)
+	$call clist_create, $.p_scrollback
 	$.n_scrollback_count=0
     $.n_scrollback_size=$(n)
+    $call clist_expand, $.p_scrollback, $(n)
     $call scrollback_shrink_to, $.n_scrollback_size
 
 # ----
@@ -43,108 +36,77 @@ subcode: scrollback_shrink_to(n)
     $if $.n_scrollback_count>$(n)
 	tn_shrink=$.n_scrollback_count-$(n)
 	$for i=0:tn_shrink
-	    ts_line = delpos234($.p_scrollback, 0)
+	    $call clist_shift, $.p_scrollback, ts_line
 	    $.n_scrollback_count--
-	    sfree(ts_line)
+	    free(ts_line)
 
 subcode: scrollback_push(line)
     $call scrollback_shrink_to, $.n_scrollback_size-1
     $dump(scrollback_shrink_to) $.n_scrollback_size, $.n_scrollback_count
-    addpos234($.p_scrollback, compressline($(line)), $.n_scrollback_count)
+    ts_line=compressline($(line))
+    $call clist_push, $.p_scrollback, ts_line
     $.n_scrollback_count++
 
 subcode: scrollback_pop(line)
-    $.n_scrollback_count--
-    ts_line=delpos234($.p_scrollback, $.n_scrollback_count)
+    $call clist_pop, $.p_scrollback, ts_line
     $(line)=decompressline(ts_line)
-    sfree(ts_line)
+    free(ts_line)
+    $.n_scrollback_count--
 
 # ----------------------------------------
 subcode: get_scrollback_top(var)
     $(var)=-$.n_scrollback_count
-
-fncode: sblines(Terminal *term)
-    tn_lines=$.n_scrollback_count
-    $if cfg.erase_to_scrollback && $.alt_which
-	tn_lines += $.alt_sblines;
-    return tn_lines
 
 fncode: term_clrsb(Terminal *term)
     $call scrollback_shrink_to, 0
     $.alt_sblines=0
 # ----------------------------------------------------------------
 subcode: get_screen_line(y, p_line)
-    $(p_line)=index234($.screen, $(y))
+    $call clist_index, $.screen, $(y), $(p_line)
 
 fncode: lineptr(Terminal *term, int y)
     $return_type termline * 
     $local termline *p_line
     $struct(termline) b_temporary
-    $local tree234 *whichtree
+    $local struct clist * whichtree
 
     $if y >= 0
-	whichtree = $.screen;
 	tn_idx = y;
-    $else
-	int altlines = 0;
-
-	$if cfg.erase_to_scrollback && $.alt_which
-	    altlines = $.alt_sblines;
-	$if y < -altlines
-	    whichtree = $.p_scrollback;
-	    tn_idx = y + altlines + count234($.p_scrollback);
-	$else
-	    whichtree = $.alt_screen;
-	    tn_idx = y + $.alt_sblines;
-	    /* tn_idx = y + count234($.alt_screen); */
-    $if whichtree == $.p_scrollback
-	void * cline = index234(whichtree, tn_idx);
-	p_line = decompressline(cline);
-	p_line->b_temporary=1
-    $else
-	p_line = index234(whichtree, tn_idx);
+	$call clist_index, $.screen, tn_idx, p_line
 	p_line->b_temporary=0
-
+    $else
+	tn_idx = y + $.p_scrollback->n_count
+	$call clist_index, $.p_scrollback, tn_idx, ts_line
+	p_line = decompressline(ts_line)
+	p_line->b_temporary=1
     resizeline(term, p_line, $.cols);
     return p_line;
 
 fncode: unlineptr(termline * p_line)
     $if p_line->b_temporary
 	$call freeline, p_line
-# -------------------------------------------------------------------------
-fncode: scroll(Terminal *term, tn_top, tn_bot, tn_lines, b_scrollback)
-    $if tn_top != 0 || $.alt_which != 0
-	b_scrollback = FALSE
-
-    $if tn_lines< 0
-	$while tn_lines< 0
-	    $call scroll_up_one
-	    tn_lines++
-    $else
-	$while tn_lines> 0
-	    $call scroll_down_one
-	    tn_lines--
-
+# ----------------------------------------------------------------
 # scroll up one, selection goes down one 
 subcode: scroll_up_one
     $local termline * p_line
-    p_line = delpos234($.screen, tn_bot);
+    $call clist_pop, $.screen, p_line
     resizeline(term, p_line, $.cols);
     $call blank_line
-    addpos234($.screen, p_line, tn_top);
+    $call clist_unshift, $.screen, p_line
 
     $call @scroll_selection_down_one
 
 # scroll down one, selection goes up one 
 subcode: scroll_down_one
-    p_line = delpos234($.screen, tn_top);
-    $if b_scrollback && $.n_scrollback_size > 0
+    $local termline * p_line
+    $call clist_shift, $.screen, p_line
+    $if $.n_scrollback_size > 0
 	$call scrollback_push, p_line
 	$if $.disptop > -$.n_scrollback_size && $.disptop < 0
 	    $.disptop--
     resizeline(term, p_line, $.cols);
     $call blank_line
-    addpos234($.screen, p_line, tn_bot);
+    $call clist_push, $.screen, p_line
 
     $call @scroll_selection_up_one, -$.n_scrollback_size
 
@@ -162,10 +124,10 @@ fncode: term_scroll(Terminal *term, tn_rel, tn_off)
     $if tn_rel<0
 	$.disptop= tn_off
     $elif tn_rel>0
-	$.disptop= tn_off - sblines(term)
+	$.disptop= tn_off - $.n_scrollback_count
     $elif tn_rel==0
 	$.disptop += tn_off
-    tn_sbtop=-sblines(term)
+    tn_sbtop=-$.n_scrollback_count
     $call check_bound, $.disptop, tn_sbtop, 0
     $call update_sbar
     term_update(term);
@@ -178,7 +140,7 @@ fncode: term_scroll_to_selection(Terminal *term, tb_which_end )
     $else
 	tn_y = $.selstart.y-$.rows/2
 
-    tn_sbtop = -sblines(term);
+    tn_sbtop = -$.n_scrollback_count
     $call check_bound, tn_y, tn_sbtop, 0
     term_scroll(term, -1, tn_y);
 

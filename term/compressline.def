@@ -159,12 +159,12 @@ fncode: decompressline(void * buf)
 
     $call buf_read_init, buf
     $local termline *p_line
-    p_line = snew(termline);
+    $allocate p_line
     $call buf_get_int, p_line->cols
     $call buf_get_int, p_line->lattr
     $call buf_get_int, p_line->size
     $call buf_get_int, p_line->cc_free
-    p_line->chars=snewn(p_line->size, termchar)
+    $allocate(p_line->size) p_line->chars
     $local termchar *p_chars
     p_chars=p_line->chars
     $call buf_rle_read_init

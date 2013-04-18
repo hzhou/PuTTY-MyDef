@@ -32,6 +32,5 @@ subcode: term_do_BEL
     $if !sl_beep.b_overloaded
 	$declare void do_beep();
 	do_beep();
-	$if cfg.beep == BELL_VISUAL
-	    $call term_start_vbell
+	#$call term_start_vbell
 

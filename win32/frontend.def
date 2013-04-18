@@ -58,10 +58,6 @@ fncode: get_window_title(void *frontend, b_icon)
     $else
 	return window_name
 
-fncode: from_backend(void *frontend, int is_stderr, const char *data, int len)
-    $return_type int
-    return term_data(term, data, len);
-
 fncode: from_backend_untrusted(void *frontend, const char *data, int len)
     $return_type int
     return term_data_untrusted(term, data, len);

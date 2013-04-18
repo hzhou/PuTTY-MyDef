@@ -1,101 +1,90 @@
 subcode:: on_term_init
     $map term_decl, int disptop
-    $map term_decl, termline **disptext, int dispcursx, int dispcursy
-    $map term_decl, int curstype, int cursor_on, int rvideo, int blink_is_real
-    $.disptext=NULL
+    $map term_decl, termline **disp, int dispcursx, int dispcursy
+    $map term_decl, int curstype, int cursor_on, int rvideo, int blink_is_real, int scroll_on_disp
+    $.disp=NULL
     $.dispcursx = -1
     $.dispcursy = -1
     $.curstype = 0;
+    $call term_get_config, "blink_is_real", b_blink_is_real, 1
+    $call term_get_config, "scroll_on_disp", b_scroll_on_disp, 1
+    $call term_get_config, "blink_cur", b_blink_cur, 1
 
 subcode:: on_term_finish
-    $if $.disptext
+    $if $.disp
 	$for i=0:$.rows
-	    $call freeline, $.disptext[i]
-    sfree($.disptext);
+	    $call freeline, $.disp[i]
+	free($.disp);
 
 subcode:: on_term_power_on
     $.disptop = 0;
     $.cursor_on = 1;
     $.rvideo = 0;
-    $.blink_is_real = cfg.blinktext;
 
 subcode:: on_term_size_after
     $.disptop = 0;
 
-    $local termline ** newdisp
-    newdisp = snewn(n_row, termline *);
+    $local termline ** p_disp
+    $allocate(n_row) p_disp
     $for i=0:n_row
-	newdisp[i] = newline(term, n_col, FALSE);
+	$call newline, n_col, $.basic_erase_char
+	p_disp[i] = p_line
 	$for j=0:n_col
-	    newdisp[i]->chars[j].attr = ATTR_INVALID;
-    $if $.disptext
+	    p_disp[i]->chars[j].attr = ATTR_INVALID;
+    $if $.disp
 	$for i=0:tn_row_old
-	    $call freeline, $.disptext[i]
-    sfree($.disptext);
-    $.disptext = newdisp;
+	    $call freeline, $.disp[i]
+	free($.disp)
+    $.disp= p_disp
     $.dispcursx = $.dispcursy = -1;
 
 # #### Paint Update #####################################
 subcode:: function_list
+    $define(DATTR_MASK) 0xf0000000UL
     $list term_invalidate, term_invalidate_rect, term_update
     $list do_paint
 
 fncode: term_invalidate(Terminal *term)
     $for i=0:$.rows
 	$for j=0:$.cols
-	    $.disptext[i]->chars[j].attr |=ATTR_INVALID
+	    $.disp[i]->chars[j].attr |=ATTR_INVALID
     $call term_schedule_update
 
 fncode: term_invalidate_rect(Terminal *term, int left, int top, int right, int bottom)
-    $if left < 0
-	left = 0;
-    $if top < 0
-	top = 0;
-    $if right >= $.cols
-	right = $.cols-1;
-    $if bottom >= $.rows
-	bottom = $.rows-1;
+    $call fit_range, left, 0, $.cols
+    $call fit_range, right, 0, $.cols
+    $call fit_range, top, 0, $.rows
+    $call fit_range, bottom, 0, $.rows
 
     $for i=top:bottom+1
-	$if ($.disptext[i]->lattr & LATTR_MODE) == LATTR_NORM
-	    $for j=left:right+1
-		$.disptext[i]->chars[j].attr |= ATTR_INVALID;
-	$else
-	    $for j=left/2:right/2+1
-		$.disptext[i]->chars[j].attr |= ATTR_INVALID;
+	$for j=left:right+1
+	    $.disp[i]->chars[j].attr |= ATTR_INVALID
     $call term_schedule_update
 
 fncode: term_update(Terminal *term)
-    $declare int paint_start();
-    $declare void paint_finish();
-    
-    $if paint_start()
-	tb_need_sbar_update = $.b_seen_disp_event
-	$if $.b_seen_disp_event && cfg.scroll_on_disp
-	    # return to main screen 
-	    $.disptop = 0
-	    $.b_seen_disp_event = 0;
-	$if tb_need_sbar_update
-	    $call update_sbar
-	do_paint(term);
-	sys_cursor(NULL,  $.curs.x, $.curs.y - $.disptop);
-	paint_finish()
+    tb_need_sbar_update = $.b_seen_disp_event
+    $if $.b_seen_disp_event && $.scroll_on_disp
+	# return to main screen 
+	$.disptop = 0
+	$.b_seen_disp_event = 0;
+    $if tb_need_sbar_update
+	$call update_sbar
+    do_paint(term);
+    #sys_cursor(NULL,  $.curs.x, $.curs.y - $.disptop);
 
 subcode: update_sbar
-    tn_scroll = sblines(term);
+    tn_scroll = $.n_scrollback_count
     $declare void front_set_scrollbar(int, int, int)
     front_set_scrollbar(tn_scroll + $.rows, tn_scroll + $.disptop, $.rows);
 
 # ============================================================
-# --------------------------------------------------------------------
 fncode: do_paint(Terminal *term)
     $global extern int font_isdbcs
-    $call do_paint_draw_init
-    $call do_paint_newline_init
-    $call do_paint_cursor_attr
-    $call do_paint_cursor_xy
-    $call do_paint_cursor_invalid_old
-    #$call do_paint_optimise_scroll
+    $local termchar *p_newline
+    $allocate($.cols) p_newline
+    $(set:disp=$(this)disp[i]->chars[j])
+
+    $call do_paint_cursor
     $for i = 0:$.rows
 	$local pos srcpos
 	$local termline * p_line
@@ -103,26 +92,52 @@ fncode: do_paint(Terminal *term)
 	srcpos.y = i + $.disptop;
 	p_line = lineptr(term, srcpos.y);
 	p_chars = p_line->chars;
-	$call @do_paint_bidi_getline
+	$call do_paint_fill_newline
+	$call do_paint_check_disp
 	$call do_paint_process_line
-	unlineptr(p_line);
-    $call do_paint_newline_free
-    $call do_paint_draw_free
+	unlineptr(p_line)
+    free(p_newline)
+
+# ---------------------------------
+subcode: do_paint_fill_newline
+    $for j = 0:$.cols
+	srcpos.x = j
+	tn_char = p_chars[j].chr;
+	tn_attr = p_chars[j].attr;
+	$call decode_cset_1, tn_char
+	$call do_paint_check_ucswide
+	$call do_paint_check_reverse
+	$call do_paint_check_blink
+	$call do_paint_check_charwidth
+	/* FULL-TERMCHAR */
+	p_newline[j].attr = tn_attr;
+	p_newline[j].chr = tn_char;
+	p_newline[j].cc_next = 0;
+
+subcode: do_paint_check_disp
+    tn_laststart = 0
+    tb_dirtyrect = 0
+    $for j=0:$.cols
+	$if $(disp).attr & DATTR_STARTRUN
+	    tn_laststart = j;
+	    tb_dirtyrect = FALSE;
+	$if $(disp).chr != p_newline[j].chr || ($(disp).attr &~ DATTR_MASK) != p_newline[j].attr
+	    $if !tb_dirtyrect
+		tb_dirtyrect = TRUE;
+		$for k=tn_laststart:j
+		    $.disp[i]->chars[k].attr |= ATTR_INVALID;
+	$if tb_dirtyrect
+	    $(disp).attr |= ATTR_INVALID;
 
 subcode: do_paint_process_line
-    $call do_paint_fill_newline
-    $call do_paint_check_disptext
-
-    tb_dirty_line = (p_line->lattr != $.disptext[i]->lattr);
-    $.disptext[i]->lattr = p_line->lattr;
-    $local unsigned long tn_attr_temp
-    $local unsigned long tn_cset_temp
+    tb_dirty_line = (p_line->lattr != $.disp[i]->lattr);
+    $.disp[i]->lattr = p_line->lattr;
     $call do_paint_init_break_run, 0
     tb_last_run_dirty=0
     $for j=0:$.cols
 	tn_attr = p_newline[j].attr;
 	tn_char = p_newline[j].chr;
-	$if ($.disptext[i]->chars[j].attr ^ tn_attr) & ATTR_WIDE
+	$if ($(disp).attr ^ tn_attr) & ATTR_WIDE
 	    tb_dirty_line = TRUE
 
 	$call do_paint_check_break_run
@@ -135,21 +150,28 @@ subcode: do_paint_process_line
 
 	$call do_paint_draw_add, tn_char
 	$call do_paint_draw_add_cc
-	$call do_paint_copy
+	$call do_paint_copy_to_disp
 
     $if tb_dirty_run && tn_count > 0
 	$call do_paint_draw
-# -----------------------------------------------------------------------
+
+# ---------------------------------------------------------------
+subcode: do_paint_cursor
+    $call do_paint_cursor_attr
+    $call do_paint_cursor_xy
+    $call do_paint_cursor_invalid_old
+
 subcode: do_paint_cursor_attr
     $global extern b_has_focus
     tn_cursor_attr=0
     $if $.cursor_on
-	$if b_has_focus && ($.cblinker || !cfg.blink_cur)
+	$if b_has_focus && ($.cblinker || !$.b_blink_cur)
 	    tn_cursor_attr = TATTR_ACTCURS;
 	$else
 	    tn_cursor_attr = TATTR_PASCURS;
 	$if $.wrapnext
 	    tn_cursor_attr |= TATTR_RIGHTCURS;
+
 subcode: do_paint_cursor_xy
     tn_curs_y = $.curs.y - $.disptop;
     tn_curs_x = $.curs.x
@@ -157,7 +179,6 @@ subcode: do_paint_cursor_xy
     $local termchar *p_chars
     p_line = lineptr(term, $.curs.y);
     p_chars = p_line->chars;
-    $call @bidi_adjust_cursor_x, p_line, tn_curs_x, tn_curs_y
     $if tn_curs_x > 0 && p_chars[tn_curs_x].chr == UCSWIDE
 	tn_curs_x--
     unlineptr(p_line)
@@ -165,12 +186,12 @@ subcode: do_paint_cursor_xy
 subcode: do_paint_cursor_invalid_old
     $if $.dispcursy >= 0 && ($.curstype != tn_cursor_attr || $.dispcursy != tn_curs_y || $.dispcursx != tn_curs_x)
 	$local termchar *p_curschar
-	p_curschar= $.disptext[$.dispcursy]->chars + $.dispcursx
+	p_curschar= $.disp[$.dispcursy]->chars + $.dispcursx
+	p_curschar->attr |= ATTR_INVALID
 	$if $.dispcursx > 0 && p_curschar->chr == UCSWIDE
 	    p_curschar[-1].attr |= ATTR_INVALID
 	$if $.dispcursx < $.cols-1 && p_curschar[1].chr == UCSWIDE
 	    p_curschar[1].attr |= ATTR_INVALID
-	p_curschar->attr |= ATTR_INVALID
 	$.curstype = 0
     $.dispcursx = $.dispcursy = -1
 
@@ -191,11 +212,10 @@ subcode: do_paint_check_blink
 	tn_attr &= ~ATTR_BLINK;
 
 subcode: do_paint_check_charwidth
-    $(set:dispchar=$(this)disptext[i]->chars[j])
-    $if tn_char != $(dispchar).chr || tn_attr != ($(dispchar).attr &~(ATTR_NARROW | DATTR_MASK))
+    $if tn_char != $(disp).chr || tn_attr != ($(disp).attr &~(ATTR_NARROW | DATTR_MASK))
 	$if (tn_attr & ATTR_WIDE) == 0 && char_width(tn_char) == 2
 	    tn_attr |= ATTR_NARROW;
-    $elif $(dispchar).attr & ATTR_NARROW
+    $elif $(disp).attr & ATTR_NARROW
 	tn_attr |= ATTR_NARROW;
 
     $if i == tn_curs_y && j == tn_curs_x
@@ -204,46 +224,32 @@ subcode: do_paint_check_charwidth
 	$.dispcursx = j;
 	$.dispcursy = i;
 
-# ---------------------------------
-subcode: do_paint_newline_init
-    $local termchar *p_newline
-    p_newline = snewn($.cols, termchar);
+# -----------------------------------------------------------
+subcode:: on_term_init
+    $map term_decl, s_paint_buffer, n_paint_buffer
+    $.n_paint_buffer=1024
+    $allocate($.n_paint_buffer) $.s_paint_buffer
 
-subcode: do_paint_newline_free
-    sfree(p_newline);
+subcode:: on_term_finish
+    free($.s_paint_buffer)
 
-subcode: do_paint_fill_newline
-    $for j = 0:$.cols
-	srcpos.x = j
-	$call @do_paint_bidi_get_x
-	tn_char = p_chars[j].chr;
-	tn_attr = p_chars[j].attr;
-	$call decode_cset_1, tn_char
-	$call do_paint_check_ucswide
-	$call do_paint_check_reverse
-	$call do_paint_check_blink
-	$call do_paint_check_charwidth
-	/* FULL-TERMCHAR */
-	p_newline[j].attr = tn_attr;
-	p_newline[j].chr = tn_char;
-	p_newline[j].cc_next = 0;
+subcode: check_paint_buffer(n)
+    $if $(n)+16>=$.n_paint_buffer
+	$.n_paint_buffer+=256
+	$.s_paint_buffer=(char *)realloc($.s_paint_buffer, $.n_paint_buffer)
+    
+# ---------------------------------------------------------------
+subcode: do_paint_init_break_run(j)
+    tn_start = $(j)
+    tn_count = 0;
+    $local unsigned long tn_attr_temp
+    $local unsigned long tn_cset_temp
+    tn_attr_temp = tn_attr;
+    tn_cset_temp = CSET_OF(tn_char);
+    tb_dirty_run = tb_dirty_line;
+    $local wchar_t * p_chlist
+    p_chlist=(wchar_t *)($.s_paint_buffer+16)
 
-subcode: do_paint_check_disptext
-    tn_laststart = 0;
-    tb_dirtyrect = FALSE;
-    $for j=0:$.cols
-	$if $.disptext[i]->chars[j].attr & DATTR_STARTRUN
-	    tn_laststart = j;
-	    tb_dirtyrect = FALSE;
-	$if $.disptext[i]->chars[j].chr != p_newline[j].chr || ($.disptext[i]->chars[j].attr &~ DATTR_MASK) != p_newline[j].attr
-	    $if !tb_dirtyrect
-		$for k=tn_laststart:j
-		    $.disptext[i]->chars[k].attr |= ATTR_INVALID;
-		tb_dirtyrect = TRUE;
-	$if tb_dirtyrect
-	    $.disptext[i]->chars[j].attr |= ATTR_INVALID;
-
-# -------------------------------------------------------------------------
 subcode: do_paint_check_break_run
     tb_break_run = (tn_attr ^ tn_attr_temp) != 0;
 
@@ -257,49 +263,15 @@ subcode: do_paint_check_break_run
 	tb_break_run = TRUE;
 
     $if !font_isdbcs && !tb_dirty_line
-	$if $.disptext[i]->chars[j].chr == tn_char && ($.disptext[i]->chars[j].attr &~ DATTR_MASK) == tn_attr
+	$if $(disp).chr == tn_char && ($(disp).attr &~ DATTR_MASK) == tn_attr
 	    tb_break_run = TRUE;
 	$elif !tb_dirty_run && tn_count == 1
 	    tb_break_run = TRUE;
 
-subcode: do_paint_init_break_run(j)
-    tn_start = $(j)
-    tn_count = 0;
-    tn_attr_temp = tn_attr;
-    tn_cset_temp = CSET_OF(tn_char);
-    tb_dirty_run = tb_dirty_line;
-
-subcode: do_paint_copy
-    $if !termchars_equal_override(&$.disptext[i]->chars[j], &p_chars[j], tn_char, tn_attr)
-	tb_dirty_run = TRUE;
-	copy_termchar($.disptext[i], j, &p_chars[j]);
-	$.disptext[i]->chars[j].chr = tn_char;
-	$.disptext[i]->chars[j].attr = tn_attr;
-	$if tn_start == j
-	    $.disptext[i]->chars[j].attr |= DATTR_STARTRUN;
-    $if tn_attr & ATTR_WIDE
-	j++
-	$if j < $.cols
-	    assert(!(i == tn_curs_y && j == tn_curs_x));
-	    $if !termchars_equal(&$.disptext[i]->chars[j], &p_chars[j])
-		tb_dirty_run = TRUE;
-	    copy_termchar($.disptext[i], j, &p_chars[j]);
-
 # -----------------------------------------------------------
-subcode: do_paint_draw_init
-    $local wchar_t *p_chlist;
-    tn_chlen = 1024;
-    p_chlist = snewn(tn_chlen, wchar_t);
-
-subcode: do_paint_draw_free
-    sfree(p_chlist);
-
-subcode: do_paint_draw_add(ch)
-    $if tn_count >= tn_chlen
-	tn_chlen = tn_count + 256;
-	p_chlist = sresize(p_chlist, tn_chlen, wchar_t);
-
-    p_chlist[tn_count++] = (wchar_t) $(ch)
+subcode: do_paint_draw_add(char)
+    $call check_paint_buffer, tn_count
+    p_chlist[tn_count++] = (wchar_t) $(char)
 
 subcode: do_paint_draw_add_cc
     $if p_chars[j].cc_next
@@ -312,8 +284,26 @@ subcode: do_paint_draw_add_cc
 	    $call do_paint_draw_add, tn_char_cc
 	tn_attr_temp |= TATTR_COMBINING
 
+subcode: do_paint_copy_to_disp
+    $if !termchars_equal_override(&$(disp), &p_chars[j], tn_char, tn_attr)
+	tb_dirty_run = TRUE
+	copy_termchar($.disp[i], j, &p_chars[j]);
+	$(disp).chr = tn_char;
+	$(disp).attr = tn_attr;
+	$if tn_start == j
+	    $(disp).attr |= DATTR_STARTRUN;
+    $if tn_attr & ATTR_WIDE
+	j++
+	$if j < $.cols
+	    assert(!(i == tn_curs_y && j == tn_curs_x));
+	    $if !termchars_equal(&$(disp), &p_chars[j])
+		tb_dirty_run = TRUE;
+		copy_termchar($.disp[i], j, &p_chars[j])
+
+# -----------------------------------------------------------
 subcode: do_paint_draw
-    do_text(tn_start, i, p_chlist, tn_count, tn_attr_temp, p_line->lattr&LATTR_MODE);
-    $if tn_attr_temp & (TATTR_ACTCURS | TATTR_PASCURS)
-	do_cursor(tn_start, i, p_chlist, tn_count, tn_attr_temp, p_line->lattr&LATTR_MODE);
+    $define(LATTR_MODE) 0x3
+    tn_attr_temp |= ((p_line->lattr)&0x3)<<24
+    $pack $.s_paint_buffer, "4444", tn_start, i, tn_attr_temp, tn_count
+    from_terminal("text", $.s_paint_buffer)
 

@@ -198,30 +198,6 @@ static HMODULE winsock2_module = NULL;
 static HMODULE wship6_module = NULL;
 #endif
 
-int sk_startup(int hi, int lo)
-{
-    WORD winsock_ver;
-
-    winsock_ver = MAKEWORD(hi, lo);
-
-    if (p_WSAStartup(winsock_ver, &wsadata)) {
-	return FALSE;
-    }
-
-    if (LOBYTE(wsadata.wVersion) != LOBYTE(winsock_ver)) {
-	return FALSE;
-    }
-
-#ifdef NET_SETUP_DIAGNOSTICS
-    {
-	char buf[80];
-	sprintf(buf, "Using WinSock %d.%d", hi, lo);
-	logevent(NULL, buf);
-    }
-#endif
-    return TRUE;
-}
-
 void sk_init(void)
 {
 #ifndef NO_IPV6
@@ -305,6 +281,30 @@ void sk_init(void)
 
     sktree = newtree234(cmpfortree);
 }
+int sk_startup(int hi, int lo)
+{
+    WORD winsock_ver;
+
+    winsock_ver = MAKEWORD(hi, lo);
+
+    if (p_WSAStartup(winsock_ver, &wsadata)) {
+	return FALSE;
+    }
+
+    if (LOBYTE(wsadata.wVersion) != LOBYTE(winsock_ver)) {
+	return FALSE;
+    }
+
+#ifdef NET_SETUP_DIAGNOSTICS
+    {
+	char buf[80];
+	sprintf(buf, "Using WinSock %d.%d", hi, lo);
+	logevent(NULL, buf);
+    }
+#endif
+    return TRUE;
+}
+
 
 void sk_cleanup(void)
 {

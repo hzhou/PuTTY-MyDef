@@ -31,37 +31,6 @@ subcode: main_on_WM_KILLFOCUS
     term_update(term);
 
 #---- Paint -------------------------------------------------------
-subcode: main_on_WM_PAINT
-    $local PAINTSTRUCT ps
-    $local HDC hdc
-    HideCaret(hwnd);
-    hdc = BeginPaint(hwnd, &ps);
-    $call @WM_PAINT_palette
-    tn_chr_l=(ps.rcPaint.left-offset_width)/font_width
-    tn_chr_r=(ps.rcPaint.right-offset_width-1)/font_width
-    tn_chr_t=(ps.rcPaint.top-offset_height)/font_height
-    tn_chr_b=(ps.rcPaint.bottom-offset_height-1)/font_height
-
-    term_invalidate_rect(term, tn_chr_l, tn_chr_t, tn_chr_r, tn_chr_b)
-
-    $if ps.fErase || ps.rcPaint.left  < offset_width  || ps.rcPaint.top   < offset_height || ps.rcPaint.right >= offset_width + font_width*n_cols || ps.rcPaint.bottom>= offset_height + font_height*n_rows
-	$call paint_background
-
-    SelectObject(hdc, GetStockObject(SYSTEM_FONT));
-    SelectObject(hdc, GetStockObject(WHITE_PEN));
-    EndPaint(hwnd, &ps);
-    ShowCaret(hwnd);
-    return 0;
-
-subcode: paint_background
-    $local COLORREF color_defbg_temp
-    color_defbg_temp=colours[ATTR_DEFBG>>ATTR_BGSHIFT]
-    $call quick_brush, color_defbg_temp
-    $call quick_pen, color_defbg_temp
-    IntersectClipRect(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom); 
-    ExcludeClipRect(hdc, offset_width, offset_height, offset_width+font_width*n_cols, offset_height+font_height*n_rows);
-    Rectangle(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom);
-
 # -- Commands -------------------------------------------------------
 subcode: on_IDM_SHOWLOG
     showeventlog(hwnd)

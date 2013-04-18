@@ -1,122 +1,105 @@
+include: win32/size.def
+include: win32/color.def
 
 fncode: WinMain
-    $call init_console
-    $symbol HWND hwnd
-    $symbol HINSTANCE hinst
-    hwnd=NULL
-    back=NULL
-    hinst=cur_instance
-    $symbol int flags
-    flags = FLAG_VERBOSE | FLAG_INTERACTIVE;
+    $call @WinMain_Init
+    $call @WinMain_PreWindow
+    $call wc_cursor, IDC_IBEAM
+    $call register_wndclass, "$(appname)", WndProc_main
 
-    sk_init()
-    InitCommonControls()
-    defuse_showwindow()
-    init_winver()
-    $call @windows_version_check
-    init_help()
-    $call init_COM
+    $global hwnd_main
+    $call create_window_style
+    $call cw_style, tn_ws
+    $call cw_style_ex, tn_wsex
+    $call cw_size, 10, 10, n_win_width, n_win_height
+    $call create_window, hwnd_main, "$(appname)"
 
-    $call load_cfg_default
-
-    $call register_window
-    $call create_window
-    $call init_terminal
-    $call init_size
-    $call init_caret
-    $call init_scrollbar
-
-    start_backend()
-
-    $call init_colors
     $call @WinMain_PreShow
-    $call tray_show_window
-
-    $call init_transparency
+    $call show_window
 
     $call @WinMain_PreLoop
     $call win_loop
 
     finished:
-    cleanup_exit(msg.wParam)
-    return msg.wParam
+    $call @WinMain_CleanUp
 
-subcode: init_COM
-    $local HRESULT hr
-    hr=CoInitialize(NULL)
-    $call assert, hr==S_OK || hr==S_FALSE
+# --------------------------------------------------
+subcode: assert_action
+    $call msgbox, "Assert Error: $(check) @ line %d", __LINE__
+    return 1
+
+# --------------------------------------------------
+subcode:: WinMain_Init
+    $call init_config
+    #$call init_console
+    #$call winsock_init
+
+subcode:: WinMain_PreShow
+    $call init_terminal
+    #$call init_size
+    #$call init_caret
+    #$call init_scrollbar
+
+    #$call start_backend
+
+    # setup line discipline
+    #$call line_discipline_init
+    # set state
+    #must_close_session = FALSE;
+    #session_closed = FALSE;
+
+    #$call init_colors
+
+subcode:: WinMain_PreLoop
+
+subcode:: WinMain_CleanUp
+    #$call cleanup_exit
+# --------------------------------------------------
+
+subcode: cleanup_exit
+    $call @WinMain_CleanUp
+     # Clean up.
+    deinit_fonts();
+    #$call winsock_cleanup
+    #$call ssh_cleanup
+
+    exit(0);
+
+subcode: winsock_cleanup
+    sk_cleanup();
+
+subcode: ssh_cleanup
+    random_save_seed();
+    $(if:MSCRYPTOAPI)
+	crypto_wrapup();
 
 ## -------------------------------------------------
 subcode: pre_WndProc_main
     #$call dump_msg
 
-subcode: register_window
-    $local WNDCLASSEX wc
-    $if cfg.win_icon[0]
-	wc.hIcon = extract_icon(cfg.win_icon, FALSE);
-	wc.hIconSm = extract_icon(cfg.win_icon, TRUE);
-    $else
-	$call register_wndclass_icon, IDI_MAINICON
-
-    $WndProc main
-    $call register_wndclass, "PuTTY", IDC_IBEAM, CUSTOM_ICON, WndProc_main
-
-subcode: create_window
-    $global int font_width, int font_height
-    $global int extra_width, int extra_height
-    font_width = 10;
-    font_height = 20;
-    extra_width = 25;
-    extra_height = 28;
-
-    $local tn_w, tn_h
-    tn_w = extra_width + font_width * cfg.width;
-    tn_h = extra_height + font_height * cfg.height;
-    $local RECT rct_temp
-    $call get_fullscreen_rect, rct_temp
-    $if tn_w>rct_temp.right-rct_temp.left
-	tn_w=rct_temp.right-rct_temp.left
-    $if tn_h>rct_temp.bottom-rct_temp.top
-	tn_h=rct_temp.bottom-rct_temp.top
-
+subcode: create_window_style
+    $call win_get_config, "scrollbar", tb_scrollbar, 1
+    $call win_get_config, "noresize", tb_noresize, 0
+    $call win_get_config, "alwaysontop", tb_alwaysontop, 0
+    $call win_get_config, "sunken_edge", tb_sunken_edge, 0
     tn_ws= WS_OVERLAPPEDWINDOW | WS_VSCROLL
     tn_wsex = 0
-    $if !cfg.scrollbar
+    $if !tb_scrollbar
 	tn_ws &= ~(WS_VSCROLL);
-    $if cfg.resize_action == RESIZE_DISABLED
+    $if tb_noresize
 	tn_ws &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
-    $if (cfg.alwaysontop)
+    $if tb_alwaysontop
 	tn_wsex |= WS_EX_TOPMOST;
-    $if cfg.sunken_edge
+    $if tb_sunken_edge
 	tn_wsex |= WS_EX_CLIENTEDGE;
-
-    hwnd = CreateWindowEx(tn_wsex, appname, appname, tn_ws, CW_USEDEFAULT, CW_USEDEFAULT, tn_w, tn_h, NULL, NULL, cur_instance, NULL);
-
-subcode: init_size
-    init_fonts(0,0);
-    $local RECT rct_cr
-    $local RECT rct_wr
-    GetWindowRect(hwnd, &rct_wr);
-    GetClientRect(hwnd, &rct_cr);
-    $global int offset_width, int offset_height
-    $global int extra_width, int extra_height
-    offset_width = cfg.window_border
-    offset_height = cfg.window_border
-    extra_width = rct_wr.right - rct_wr.left - rct_cr.right + rct_cr.left + offset_width*2;
-    extra_height = rct_wr.bottom - rct_wr.top - rct_cr.bottom + rct_cr.top +offset_height*2;
-
-    tn_w = extra_width + font_width * n_cols;
-    tn_h = extra_height + font_height * n_rows;
-    tn_ret=SetWindowPos(hwnd, NULL, 0, 0, tn_w, tn_h, SWP_NOMOVE | SWP_NOREDRAW | SWP_NOZORDER);
 
 subcode: init_caret
     $global HBITMAP caretbm
     tn_size = (font_width + 15) / 16 * 2 * font_height;
-    ts_bits = snewn(tn_size, char);
-    memset(ts_bits, 0, tn_size);
+    $allocate(tn_size, 0) ts_bits
     caretbm = CreateBitmap(font_width, font_height, 1, 1, ts_bits);
-    sfree(ts_bits);
-    CreateCaret(hwnd, caretbm, font_width, font_height);
+    free(ts_bits);
+    CreateCaret(hwnd_main, caretbm, font_width, font_height);
 
 subcode: init_scrollbar
     $local SCROLLINFO si
@@ -126,272 +109,64 @@ subcode: init_scrollbar
     si.nMax = n_rows - 1;
     si.nPage = n_rows;
     si.nPos = 0;
-    SetScrollInfo(hwnd, SB_VERT, &si, FALSE);
+    SetScrollInfo(hwnd_main, SB_VERT, &si, FALSE);
 
 subcode: show_window
-    ShowWindow(hwnd, n_cmdshow);
-    SetForegroundWindow(hwnd);
-    $call term_focus, GetForegroundWindow() == hwnd
-    UpdateWindow(hwnd);
+    ShowWindow(hwnd_main, n_cmdshow);
+    SetForegroundWindow(hwnd_main);
+    $call term_focus, GetForegroundWindow() == hwnd_main
+    UpdateWindow(hwnd_main);
 
 subcode: init_transparency
-    $if cfg.transparency >= 50 && cfg.transparency < 255
-	MakeWindowTransparent(hwnd, cfg.transparency);
+    $call get_config, "transparency", tn_transparency, 0
+    $if tn_transparency >= 50 && tn_transparency < 255
+	MakeWindowTransparent(hwnd_main, tn_transparency)
 
 # ---------------------
-subcode: win_loop
-    $while 1
-	$local HANDLE * handles
-	$local n_handles, n
-	# global events
-	handles = handle_get_events(&n_handles);
-	n = MsgWaitForMultipleObjects(n_handles, handles, FALSE, INFINITE, QS_ALLINPUT)
-	$if (unsigned)(n - WAIT_OBJECT_0) < (unsigned)n_handles
-	    handle_got_event(handles[n - WAIT_OBJECT_0])
-	    sfree(handles);
-	    $if must_close_session
-		close_session()
-	$else
-	    sfree(handles)
-
-	# window events
-	$local MSG msg
-	$while PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)
-	    $if msg.message == WM_QUIT
-		goto finished
-
-	    $if !(IsWindow(logbox) && IsDialogMessage(logbox, &msg))
-		$call @TranslateMessage
-		DispatchMessage(&msg)
-	    $call @Async_Events
-	    $if must_close_session
-		close_session();
-
-	# pending events
-	$call term_focus, GetForegroundWindow() == hwnd
-
-	$call win_loop_pending_netevent
-
-# ---------------------
-subcode:: function_list
-    $global TERM term
-    $global Backend * back, void * backhandle
-    $global char * window_name, char * icon_name
-
-    $global int must_close_session, int session_closed
-
-    $list start_backend
-    $list close_session, cleanup_exit
-
-subcode: term_focus(bool)
-    $global b_has_focus
-    b_has_focus=$(bool)
-
-subcode: term_size(row, col)
-    $global n_rows, n_cols
-    n_rows=$(row)
-    n_cols=$(col)
-    $declare void term_size(TERM, int, int)
-    term_size(term, n_rows, n_cols)
-    $if back
-	back->size(backhandle, n_cols, n_rows)
-
 subcode: init_terminal
-    $symbol void * logctx
-    $declare TERM term_init(Config *)
-    term = term_init(&cfg)
-    logctx = log_init(NULL, &cfg);
-    $declare void term_set_scrollback_size(TERM, int)
-    term_set_scrollback_size(term, cfg.savelines)
-    $call term_size, cfg.height, cfg.width
+    $global TERM term
+    term = term_init()
+    $call term_size, 80, 25
 
-fncode: start_backend
-    back=backend_from_proto(cfg.protocol)
-    assert(back)
-
-    $local ts_realhost
-    $local const char * ts_err
-    ts_err=back->init(NULL, &backhandle, &cfg, cfg.host, cfg.port, &ts_realhost, cfg.tcp_nodelay, cfg.tcp_keepalives)
-    back->provide_logctx(backhandle,  logctx)
+subcode: start_backend
+    back=backend_create_loop()
+    $call assert, back
+    ts_err = back->init(back)
     $if ts_err
-	$eval tempstr, "$appname Error"
 	$local ts_msg_buf[1024]
-	snprintf(ts_msg_buf, 1024, "Unable to open connection to\n%.800s\n%s", cfg_dest(&cfg), ts_err)
-	MessageBox(NULL, ts_msg_buf, $(tempstr), MB_ICONERROR|MB_OK)
-    # window title
-    window_name=NULL
-    icon_name=NULL
-    $if *cfg.wintitle
-	ts_title=cfg.wintitle
-    $else
-	$eval tempstr, "$ts_realhost - $appname"
-	ts_title=$(tempstr)
-    set_title(NULL, ts_title)
-    set_icon(NULL, ts_title)
-    sfree(ts_realhost)
-    # setup line discipline
-    $call line_discipline_init
-    # set state
-    must_close_session = FALSE;
-    session_closed = FALSE;
-    $call menu_del_restart
-
-    back->size(backhandle, n_rows, n_cols)
-
-fncode: close_session
-    $local ts_temp_buf[100];
-
-    session_closed = TRUE;
-    sprintf(ts_temp_buf, "%.70s (inactive)", appname);
-    set_icon(NULL, ts_temp_buf);
-    set_title(NULL, ts_temp_buf);
-
-    $call line_discipline_free
-    $if back
-	back->free(backhandle);
-	backhandle = NULL;
-	back = NULL;
-	update_specials_menu(NULL);
-    must_close_session = FALSE;
-
-    $call menu_add_restart
-
-fncode: cleanup_exit(n_code)
-    $call @WinMain_CleanUp
-     # Clean up.
-    deinit_fonts();
-    sk_cleanup();
-
-    $if cfg.protocol == PROT_SSH
-	random_save_seed();
-	$(if:MSCRYPTOAPI)
-	    crypto_wrapup();
-    shutdown_help();
-
-    CoUninitialize();
-
-    exit(n_code);
+	snprintf(ts_msg_buf, 1024, "Unable to open connection:\n%s", ts_err)
+	MessageBox(NULL, ts_msg_buf, "$(appname) Error", MB_ICONERROR|MB_OK)
+    back->size(back, n_rows, n_cols)
 
 # ===============================================================
-subcode:: function_list
-    $list do_select
 
-/* * Set up, or shut down, an AsyncSelect. Called from winnet.c.  */
-fncode: do_select(SOCKET skt, tb_startup)
-    $return_type char *
-    $if !hwnd
-	return "do_select(): internal error (hwnd==NULL)";
+subcode: main_on_WM_PAINT
+    $local PAINTSTRUCT ps
+    $local HDC hdc
+    HideCaret(hwnd);
+    hdc = BeginPaint(hwnd, &ps);
 
-    $if tb_startup
-	tn_msg = WM_NETEVENT;
-	tn_events = (FD_CONNECT | FD_READ | FD_WRITE | FD_OOB | FD_CLOSE | FD_ACCEPT);
-    $else
-	tn_msg = 0
-	tn_events = 0;
+    tn_chr_l=(ps.rcPaint.left-offset_width)/font_width
+    tn_chr_r=(ps.rcPaint.right-offset_width-1)/font_width
+    tn_chr_t=(ps.rcPaint.top-offset_height)/font_height
+    tn_chr_b=(ps.rcPaint.bottom-offset_height-1)/font_height
 
-    $if p_WSAAsyncSelect(skt, hwnd, tn_msg, tn_events) == SOCKET_ERROR
-	$if p_WSAGetLastError()
-	    return "Network is down";
-	$else
-	    return "WSAAsyncSelect(): unknown error";
-    return NULL;
+    #term_invalidate_rect(term, tn_chr_l, tn_chr_t, tn_chr_r, tn_chr_b)
 
-# ---- Errors -------------------------------------------
-subcode:: function_list
-    $list connection_fatal, cmdline_error, fatalbox, modalfatalbox
-    $list notify_remote_exit
+    $if ps.fErase || ps.rcPaint.left  < offset_width  || ps.rcPaint.top   < offset_height || ps.rcPaint.right >= offset_width + font_width*n_cols || ps.rcPaint.bottom>= offset_height + font_height*n_rows
+	$call paint_background
 
-subcode: error_box(title, type)
-    $local va_list ap
-    va_start(ap, fmt);
-    ts_msg = dupvprintf(fmt, ap)
-    va_end(ap);
-    $eval tempstr, $(title)
-    MessageBox(hwnd, ts_msg, $(tempstr), $(type))
-    sfree(ts_msg);
-
-fncode: cmdline_error(fmt)
-    $call error_box, "$appname Command Line Error", MB_ICONERROR|MB_OK
-    exit(1);
-
-fncode: fatalbox(fmt)
-    $call error_box, "$appname Fatal Error", MB_ICONERROR|MB_OK
-    cleanup_exit(1);
-
-fncode: modalfatalbox(fmt)
-    $call error_box, "$appname Fatal Error", MB_SYSTEMMODAL|MB_ICONERROR|MB_OK
-    cleanup_exit(1);
-
-fncode: connection_fatal(void * frontend, fmt)
-    $call error_box, "$appname Fatal Error", MB_ICONERROR|MB_OK
-    $if cfg.close_on_exit == FORCE_ON
-	PostQuitMessage(1);
-    $else
-	must_close_session = TRUE;
-
-fncode: notify_remote_exit(void * frontend)
-    $if !session_closed
-	tn_exitcode=back->exitcode(backhandle)
-	$if tn_exitcode>=0
-	    $if cfg.close_on_exit == FORCE_ON || (cfg.close_on_exit == AUTO && tn_exitcode != INT_MAX)
-		PostQuitMessage(0);
-	    $else
-		must_close_session = TRUE;
-		session_closed = TRUE;
-		$if tn_exitcode != INT_MAX
-		    MessageBox(hwnd, "Connection closed by remote host", appname, MB_OK | MB_ICONINFORMATION);
-
-# ----------------------------------------
-subcode:: function_list
-    $global b_pending_netevent=0, n_pend_netevent_wparam, n_pend_netevent_lparam
-    extern int select_result(WPARAM, LPARAM);
-    $list enact_pending_netevent
-    
-subcode: main_on_WM_NETEVENT
-    $if b_pending_netevent
-	enact_pending_netevent();
-    b_pending_netevent=1
-    n_pend_netevent_wparam = wparam;
-    n_pend_netevent_lparam = lparam;
-    $if WSAGETSELECTEVENT(lparam) != FD_READ
-	enact_pending_netevent()
-    net_pending_errors();
+    SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    SelectObject(hdc, GetStockObject(WHITE_PEN));
+    EndPaint(hwnd, &ps);
+    ShowCaret(hwnd);
     return 0;
 
-fncode: enact_pending_netevent
-    $local static b_reentering = 0;
-    $if b_reentering
-	return
-    b_pending_netevent = FALSE;
+subcode: paint_background
+    $call quick_brush, colours[COLOR_DEFBG]
+    $call quick_pen, colours[COLOR_DEFBG]
+    IntersectClipRect(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom); 
+    ExcludeClipRect(hdc, offset_width, offset_height, offset_width+font_width*n_cols, offset_height+font_height*n_rows);
+    Rectangle(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom);
 
-    b_reentering = 1;
-    select_result(n_pend_netevent_wparam, n_pend_netevent_lparam);
-    b_reentering = 0;
 
-subcode: win_loop_pending_netevent
-    $if b_pending_netevent
-	enact_pending_netevent()
-    net_pending_errors()
-
-#----------------------------------------------------
-fncode: agent_schedule_callback(FnAgentSchedule callback, void *callback_ctx, void *data, int len)
-    $typedef void(* FnAgentSchedule)(void *, void *, int)
-    callback(callback_ctx, data, len)
-    /*
-    $struct(agent_callback) FnAgentSchedule callback, void * callback_ctx, void * data, int len
-    $local struct agent_callback * pcbk
-    pcbk = snew(struct agent_callback);
-    pcbk->callback = callback;
-    pcbk->callback_ctx = callback_ctx;
-    pcbk->data = data;
-    pcbk->len = len;
-    PostMessage(hwnd, WM_AGENT_CALLBACK, 0, (LPARAM)pcbk);
-    */
-
-/*
-subcode: main_on_WM_AGENT_CALLBACK
-    struct agent_callback *c = (struct agent_callback *)lParam;
-    c->callback(c->callback_ctx, c->data, c->len);
-    sfree(c);
-    return 0;
-*/

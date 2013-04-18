@@ -1,46 +1,56 @@
+include: cfg.def
+
 include: macro/charset.def
 include: macro/attr.def
+
+include: macro/clist.def
 
 include: term/main.def
 include: term/misc.def
 include: term/cursor.def
 include: term/line.def
-#include: term/alt.def
+include: term/alt.def
 include: term/scrollback.def
 #include: term/selection.def
 #include: term/paste.def
 include: term/term_out.def
 include: term/paint.def
 
-page: term_inc
+page: term
+    autoload: h
     subcode: main
 	$define(snprintf) sprintf_s
 	$(set:this=term->)
 	$register_prefix(pos) pos
 	$register_name(p_line) termline *
 
-	$global extern Config cfg
 	$call attr_defines
 	$call charset_defines
 	$call declare_cmap
 	$global extern int line_codepage
 	$declare void linedisc_send(char * s_buf, int n_len)
 
-	$write_h(term.h) term
-	$struct(tagTerminal) $term
+	$write_h(term) struct-tagTerminal
 
 	$call @global
 	$call @function_list
 
+# --------------------------
 subcode: term_decl(var)
     $struct(tagTerminal) $(var)
 
-subcode:: on_term_init
-    $map term_decl, int alt_sblines, int alt_which, tree234 *alt_screen
-    $.alt_sblines=0
-    $.alt_which=0
-    $.alt_screen=NULL
+subcode: term_get_config(name, var, default)
+    $call term_decl,  $(var)
+    $call get_config, $(name), $(this)$(var), $(default)
 
+subcode: fit_range(var, a, b)
+    $if $(var)<$(a)
+	$(var)=$(a)
+    $elif $(var)>=$(b)
+	$(var)=$(b)-1
+
+# --------------------------
+subcode:: on_term_init
     $map term_decl, int selstate
     $enumbase() NO_SELECTION, ABOUT_TO, DRAGGING, SELECTED
     $.selstate=NO_SELECTION

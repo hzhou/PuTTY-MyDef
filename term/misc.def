@@ -8,6 +8,8 @@ subcode:: on_term_init
     $map term_decl, int cblinker, int tblinker, int in_vbell
     $.window_update_pending=0
 
+    $define(CURSORBLINK) GetCaretBlinkTime()
+    $define(TICKSPERSEC) 1000
     $define(VBELL_TIMEOUT) (TICKSPERSEC/10)
     $define(TBLINK_DELAY)   ((TICKSPERSEC*9+19)/20)
     $define(CBLINK_DELAY)   (CURSORBLINK)
@@ -67,7 +69,6 @@ subcode: seen_disp_event
 
 fncode: term_seen_key_event(Terminal *term)
     $call @term_on_key_event
-    $if cfg.scroll_on_key
-	$.disptop = 0
-	$call seen_disp_event
+    $.disptop = 0
+    $call seen_disp_event
 

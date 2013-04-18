@@ -1,48 +1,47 @@
+include: cfg.def
 include: macro/attr.def
 
 include: win32/main.def
-include: win32/commandline.def
-include: win32/wndproc.def
-include: win32/tray.def
-include: win32/util.def
+#include: win32/sock.def
+#include: win32/commandline.def
+#include: win32/wndproc.def
+#include: win32/tray.def
+#include: win32/util.def
 include: win32/font.def
-include: win32/clipboard.def
-include: win32/resize.def
-include: win32/other.def
-include: win32/frontend.def
-include: win32/menu.def
-include: win32/time.def
-include: win32/debug.def
-include: win32/keyboard.def
+#include: win32/clipboard.def
+#include: win32/resize.def
+#include: win32/other.def
+#include: win32/frontend.def
+#include: win32/menu.def
+#include: win32/time.def
+#include: win32/debug.def
+#include: win32/keyboard.def
 #include: hack.def
 #include: mouse.def
 #include: palette.def
-include: win32/color.def
+#include: win32/color.def
 
-include: front/line_discipline.def
-include: front/get_userpass.def
-include: front/paste.def
-
-subcode: assert(@cond)
-    $if ! ($(cond))
-	return 1
+#include: front/line_discipline.def
+#include: front/get_userpass.def
+#include: front/paste.def
 
 # ----------------------------------------------------
-page: window_inc
-    output_dir: windows
+page: main
+    autoload: h
     subcode: main
+	$(set:appname=PuTTY-MyDef)
 	$define(snprintf) sprintf_s
-	$declare HICON extract_icon(char *iconpath, int smallicon)
+	$declare TERM term_init()
 	$declare void term_invalidate(TERM)
 	$declare void term_scroll(TERM, int, int)
 	$declare int term_data_untrusted(TERM, const char *, int)
-	$declare int term_data(TERM, const char *, int)
+	$declare int term_data(TERM, char *, int)
 	$call attr_defines
 	$call charset_defines
-	$include storage.h
-	$include win_res.h
+	#$include storage.h
+	#$include win_res.h
 	$typedef void * TERM
-	$symbol char * appname
+	#$symbol char * appname
 	$call @global
 	$call @function_list
 	$list WinMain
@@ -51,4 +50,24 @@ subcode:: global
     $struct(tagWindow) HWND hwnd
     $global struct tagWindow win
     $(set:this=win.)
+
+subcode: win_get_config(name, var, default)
+    $global $(var)
+    $call get_config, $(name), $(var), $(default)
+
+# ---- Front End -------------------------------------------
+subcode:: global
+    $list from_backend, from_terminal
+
+fncode: from_backend(ts_buf, tn_len)
+    $return_type int
+    return term_data(term, ts_buf, tn_len)
+
+fncode: from_terminal(ts_msg, void * data)
+    $if strncmp(ts_msg, "text", 4)==0
+	$local tn_x, tn_y, tn_attr, tn_count, wchar_t * tp_text
+	$unpack, data, "4444s", tn_x, tn_y, tn_attr, tn_count, tp_text
+	do_text(tn_x, tn_y, tp_text, tn_count, tn_attr, 0)
+	$if tn_attr & (TATTR_ACTCURS | TATTR_PASCURS)
+	    do_cursor(tn_x, tn_y, tp_text, tn_count, tn_attr, 0)
 

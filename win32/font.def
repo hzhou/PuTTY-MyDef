@@ -32,7 +32,7 @@ subcode:: function_list
 
 subcode: set_fontweight
     $local int fw_dontcare, int fw_bold
-    $if cfg.font.isbold
+    $if b_font_bold
 	fw_dontcare = FW_BOLD;
 	fw_bold = FW_HEAVY;
     $else
@@ -40,29 +40,33 @@ subcode: set_fontweight
 	fw_bold = FW_BOLD;
 
 fncode: init_fonts(n_tw, n_th)
+    $call win_get_config, "font_name", s_font_name, NULL
+    #$call win_get_config, "font_name", s_font_name, "Consolas"
+    $call win_get_config, "font_size", n_font_height, 0
+    $call win_get_config, "font_isbold", b_font_bold, 0
     $for i=0:FONT_MAXNO
 	fonts[i]=NULL
 
-    HDC hdc = GetDC(hwnd);
+    HDC hdc = GetDC(hwnd_main);
     $call init_font_size
 
-    bold_mode = cfg.bold_colour ? BOLD_COLOURS : BOLD_FONT;
+    bold_mode = BOLD_FONT;
     und_mode = UND_FONT;
 
     $call set_fontweight
-    $call create_font, FONT_NORMAL, cfg.font.charset, fw_dontcare, FALSE
-    $call create_font, FONT_BOLD, cfg.font.charset, fw_bold, FALSE
-    $call create_font, FONT_UNDERLINE, cfg.font.charset, fw_dontcare, TRUE
+    $call create_font, FONT_NORMAL, fw_dontcare, FALSE
+    $call create_font, FONT_BOLD, fw_bold, FALSE
+    $call create_font, FONT_UNDERLINE, fw_dontcare, TRUE
     fontflag[0] = fontflag[1] = fontflag[2] = 1;
 
     $call get_font_textmetric
     $call check_underline_font
     $call check_bold_und_size
 
-    ReleaseDC(hwnd, hdc);
+    ReleaseDC(hwnd_main, hdc);
 
-    $declare void update_ucs_line_codepage(n_codepage);
-    update_ucs_line_codepage(cfg.line_codepage)
+    # $declare void update_ucs_line_codepage(n_codepage);
+    # update_ucs_line_codepage(cfg.line_codepage)
     $call @init_linedraw
 
 fncode: deinit_fonts
@@ -77,13 +81,13 @@ subcode: init_font_size
     $if n_th
 	font_height = n_th
     $else
-	font_height = cfg.font.height;
+	font_height = n_font_height
 	$if font_height > 0
 	    font_height = -MulDiv(font_height, GetDeviceCaps(hdc, LOGPIXELSY), 72);
     font_width = n_tw
 
-subcode: create_font(i, charset, weight, underline)
-    fonts[$(i)] = CreateFont (font_height, font_width, 0, 0, $(weight), FALSE, $(underline), FALSE, $(charset), OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, FONT_QUALITY(cfg.font_quality), FIXED_PITCH | FF_DONTCARE, cfg.font.name)
+subcode: create_font(i, weight, underline)
+    fonts[$(i)] = CreateFont (font_height, font_width, 0, 0, $(weight), FALSE, $(underline), FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FIXED_PITCH | FF_DONTCARE, s_fontname)
 
 subcode: check_underline_font
     $local COLORREF t_color
@@ -197,22 +201,22 @@ fncode: another_font(n)
 	tn_font_height*=2
 
     $if n & FONT_OEM
-	tn_font_charset = OEM_CHARSET;
+	tn_font_charset = OEM_CHARSET
     $else
-	tn_font_charset = cfg.font.charset;
+	tn_font_charset = DEFAULT_CHARSET
 
     $if n & FONT_BOLD
 	tn_font_weight = fw_bold;
     $else
-	tn_font_weight = fw_dontcare;
+	tn_font_weight = fw_dontcare
 
     $if n & FONT_UNDERLINE
 	tb_font_underline = TRUE;
     $else
 	tb_font_underline = FALSE;
 
-    fonts[n] = CreateFont(tn_font_height, tn_font_width, 0, 0, tn_font_weight, FALSE, tb_font_underline, FALSE, tn_font_charset, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, FONT_QUALITY(cfg.font_quality), DEFAULT_PITCH | FF_DONTCARE, cfg.font.name);
-    fontflag[n] = 1;
+    fonts[n] = CreateFont(tn_font_height, tn_font_width, 0, 0, tn_font_weight, FALSE, tb_font_underline, FALSE, tn_font_charset, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, s_fontname)
+    fontflag[n] = 1
 
 # ---------------------------------------------------------------------
 subcode: dotext_process_attr
@@ -224,7 +228,7 @@ subcode: dotext_process_attr
     $else
 	tb_do_underline=0
 
-    $if (n_attr & TATTR_ACTCURS) && cfg.cursor_type == 0 
+    $if n_attr & TATTR_ACTCURS
 	n_attr &= ~(ATTR_REVERSE|ATTR_BLINK|ATTR_COLOURS);
 	$if bold_mode == BOLD_COLOURS
 	    n_attr &= ~ATTR_BOLD;
@@ -262,21 +266,6 @@ subcode: dotext_tn_font
 
 subcode: dotext_compose_tn_font
     tn_font = 0;
-    $if cfg.vtmode == VT_POORMAN && n_lattr != LATTR_NORM
-	n_lattr = LATTR_WIDE;
-    $else
-	$if n_lattr == LATTR_NORM
-	    tn_font =0
-	$elif n_lattr==LATTR_WIDE
-	    tn_font = FONT_WIDE
-	$else
-	    tn_font = FONT_WIDE+FONT_HIGH
-
-    $if n_attr & ATTR_NARROW
-	tn_font |= FONT_NARROW;
-
-    $if (text[0] & CSET_MASK) == CSET_OEMCP
-	tn_font |= FONT_OEM;
 
 subcode: dotext_fg_bg
     $call get_attr_fg, n_attr, tn_fg
@@ -449,18 +438,24 @@ fncode: do_text_internal(int x, int y, wchar_t *text, n_len, unsigned long n_att
 	$call dotext_underline
 
 # ----
+subcode: paint_block
+    $local HDC hdc
+    hdc=GetDC(hwnd_main)
+    BLOCK
+    ReleaseDC(hwnd_main, hdc);
+
 fncode: do_text(int x, int y, wchar_t *text, n_len, unsigned long n_attr, n_lattr)
-    $local HDC hdc=cur_hdc
-    # Wrapper that handles combining characters.
-    $if n_attr & TATTR_COMBINING
-	n_attr&=~TATTR_COMBINING
-	do_text_internal(x, y, text, 1, n_attr, n_lattr, 1);
-	text++
-	$for i=1:n_len
-	    do_text_internal(x, y, text, 1, n_attr, n_lattr, 0);
-	    text++;
-    $else
-	do_text_internal(x, y, text, n_len, n_attr, n_lattr, 1);
+    &call paint_block
+	# Wrapper that handles combining characters.
+	$if n_attr & TATTR_COMBINING
+	    n_attr&=~TATTR_COMBINING
+	    do_text_internal(x, y, text, 1, n_attr, n_lattr, 1);
+	    text++
+	    $for i=1:n_len
+		do_text_internal(x, y, text, 1, n_attr, n_lattr, 0);
+		text++;
+	$else
+	    do_text_internal(x, y, text, n_len, n_attr, n_lattr, 1);
 
 # ----
 subcode: do_cursor_box
@@ -482,36 +477,36 @@ subcode: do_cursor_under(yoff, ps)
     LineTo(hdc, tn_x + tn_char_width, tn_y+$(yoff))
 
 fncode: do_cursor(int x, int y, wchar_t *text, n_len, unsigned long n_attr, n_lattr)
-    $local HDC hdc=cur_hdc
-    tn_cursor_type=cfg.cursor_type
+    &call paint_block
+	tn_cursor_type=0
 
-    $if n_attr & TATTR_ACTCURS && tn_cursor_type == 0
-	$if *text != UCSWIDE 
-	    do_text(x, y, text, n_len, n_attr, n_lattr);
-	    return;
-	$else
-	    tn_cursor_type = 2;
-	    n_attr |= TATTR_RIGHTCURS;
-
-    $call dotext_position
-    COLORREF color_cursor=colours[261]
-
-    $if tn_cursor_type == 0
-	$call do_cursor_box
-    $else
 	$if n_attr & TATTR_ACTCURS
-	    BLOCK RELEASE
-	    $call quick_pen, PS_SOLID, color_cursor
-	$else
-	    BLOCK RELEASE
-	    $call quick_pen, PS_DOT, color_cursor
+	    $if *text != UCSWIDE 
+		do_text(x, y, text, n_len, n_attr, n_lattr);
+		return;
+	    $else
+		tn_cursor_type = 2;
+		n_attr |= TATTR_RIGHTCURS;
 
-	$if tn_cursor_type == 1
-	    $call do_cursor_under, font_descent, PS_SOLID
-	$elif n_attr & TATTR_RIGHTCURS
-	    $call do_cursor_vert, tn_char_width-1, PS_SOLID
+	$call dotext_position
+	COLORREF color_cursor=colours[261]
+
+	$if tn_cursor_type == 0
+	    $call do_cursor_box
 	$else
-	    $call do_cursor_vert, 0, PS_SOLID
+	    $if n_attr & TATTR_ACTCURS
+		BLOCK RELEASE
+		$call quick_pen, PS_SOLID, color_cursor
+	    $else
+		BLOCK RELEASE
+		$call quick_pen, PS_DOT, color_cursor
+
+	    $if tn_cursor_type == 1
+		$call do_cursor_under, font_descent, PS_SOLID
+	    $elif n_attr & TATTR_RIGHTCURS
+		$call do_cursor_vert, tn_char_width-1, PS_SOLID
+	    $else
+		$call do_cursor_vert, 0, PS_SOLID
 
 # -----------------------------------------------
 fncode: general_textout(HDC hdc, int x, int y, CONST RECT *lprc, unsigned short *lpString, n_len, CONST INT *lpDx_buf)

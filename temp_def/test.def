@@ -1,10 +1,6 @@
+include: ../backend.def
+
 page: test
     subcode: main
-	&call open_r, ../cfg.def
-	    print "//$_"
-	    $if /gpps\(sesskey,\s*(".*"),\s*(.*),\s*cfg->(\w+)/
-		print "strcpy(cfg.$3, $2)\n"
-	    $elif /gppi\(sesskey,\s*(".*"),\s*(\d+),\s*&cfg->(\w+)/
-		print "cfg.$3=$2\n"
-	    $elif /cfg->(\w+)\s*=\s*(.*);/
-		print "cfg.$1=$2\n"
+	$call global
+

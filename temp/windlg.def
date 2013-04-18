@@ -28,12 +28,6 @@ subcode:: global
     $global s_version="PuTTY 0.62 - MyDef Build"
     $global extern HINSTANCE cur_instance
 
-subcode: dialog(name)
-    DialogBox(cur_instance, MAKEINTRESOURCE(dialog_$(name)), hwnd, WndProc_$(name))
-
-subcode: create_dialog(name, var)
-    $(var)=CreateDialog(cur_instance, MAKEINTRESOURCE(dialog_$(name)), hwnd, WndProc_$(name))
-
 subcode: modal_dialog(name)
     EnableWindow(hwnd, 0);
     $call dialog, $(name)

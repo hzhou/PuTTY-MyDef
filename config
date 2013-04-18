@@ -1,2 +1,2 @@
-output_dir: PuTTY
+output_dir: out
 module: win32

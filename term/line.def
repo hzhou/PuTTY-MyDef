@@ -1,34 +1,37 @@
 subcode:: function_list
-    $list newline, check_boundary, insch, resizeline
+    $list check_boundary, insch, resizeline
     $list termchars_equal_override, termchars_equal
     $list copy_termchar, move_termchar
     $list find_last_nonempty_line
 
 # ---- termline ----------------------------------
-fncode: newline(Terminal *term, int cols, int bce)
-    $return_type termline *
+subcode: newline(n, char)
+    $define(LATTR_NORM) 0
+    $define(LATTR_WRAPPED)  0x10
+    $define(LATTR_WRAPPED2) 0x20
     $local termline * p_line;
-
-    p_line = snew(termline);
-    p_line->chars = snewn(cols, termchar);
-    $for j=0:cols
-	p_line->chars[j] = (bce ? $.erase_char : $.basic_erase_char);
-    p_line->cols = p_line->size = cols;
-    p_line->lattr = LATTR_NORM;
+    $allocate p_line
+    $allocate($(n)) p_line->chars
+    $for j=0:$(n)
+	p_line->chars[j] = $(char)
+    p_line->cols = p_line->size = $(n)
+    p_line->lattr = LATTR_NORM
     p_line->cc_free = 0;
-    return p_line;
 
 subcode: freeline(p_line)
     $if $(p_line)
-	sfree($(p_line)->chars);
-	sfree($(p_line))
+	free($(p_line)->chars)
+	free($(p_line))
+
+sucode: p_line_resize
+    p_line->chars=(termchar *)realloc(p_line->chars, p_line->size*sizeof(termchar))
 
 fncode: resizeline(Terminal *term, termline *p_line, tn_cols)
     tn_cols_old = p_line->cols;
     $if tn_cols_old < tn_cols
 	# -- expand --------
 	p_line->size += tn_cols - tn_cols_old;
-	p_line->chars = sresize(p_line->chars, p_line->size, termchar);
+	$call p_line_resize
 	p_line->cols = tn_cols
 	memmove(p_line->chars+tn_cols, p_line->chars+tn_cols_old, (p_line->size-p_line->cols) * sizeof(termchar));
 	$for i=tn_cols_old:tn_cols
@@ -39,7 +42,7 @@ fncode: resizeline(Terminal *term, termline *p_line, tn_cols)
 	    clear_cc(p_line, i);
 	memmove(p_line->chars+tn_cols, p_line->chars+tn_cols_old, (p_line->size-p_line->cols) * sizeof(termchar));
 	p_line->size += tn_cols - tn_cols_old;
-	p_line->chars = sresize(p_line->chars, p_line->size, termchar);
+	$call p_line_resize
 	p_line->cols = tn_cols
 
     $if p_line->cols != tn_cols
@@ -182,7 +185,7 @@ fncode: cmp_cc(termchar *p_char_a, termchar * p_char_b)
 subcode: cc_free_expand
     tn_old_size = p_line->size;
     p_line->size += 16 + (p_line->size - p_line->cols) / 2;
-    p_line->chars = sresize(p_line->chars, p_line->size, termchar);
+    $call p_line_resize
     p_line->cc_free = tn_old_size
     $for i=tn_old_size:p_line->size-1
 	$(cc_next:i) = 1;
@@ -243,8 +246,8 @@ subcode: erase_screen_2
     $.disptop=0
     term_invalidate(term);
     tn_count=find_last_nonempty_line(term, $.screen)+1
-    $dump(erase_screen_2) tn_count
-    scroll(term, 0, tn_count-1, tn_count, 1)
+    $for i=0:tn_count
+	$call scroll_down_one
 
 subcode: erase_screen_3
     $.disptop=0
@@ -273,16 +276,15 @@ subcode: erase_line_2(i)
     $call blank_line
 # ----
 subcode: blank_line
-    DEBUG OFF
     p_line->lattr = LATTR_NORM;
     $for j=0:$.cols
 	$call erase_termchar, j
 
 ######################################################
-fncode: find_last_nonempty_line(Terminal *term, tree234 *screen)
-    n=count234(screen)
+fncode: find_last_nonempty_line(Terminal *term, struct clist * screen)
+    n=screen->n_count
     $for i=n-1:-1:-1
-	p_line = index234(screen, i);
+	$call clist_index, screen, i, p_line
 	$for j=0:p_line->cols
 	    $if !termchars_equal(&p_line->chars[j], &$.erase_char)
 		return i
