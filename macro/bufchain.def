@@ -1,0 +1,78 @@
+include: c_slist.def
+
+subcode:: global
+    $define(BUFFER_GRANULE) 512
+    $call slist_declare, bufchain | n_total | n_len, n_pos, s_buf[BUFFER_GRANULE]
+
+subcode: bufchain_init(inbuf)
+    $call slist_init, $(inbuf), n_total=0
+
+subcode: bufchain_clear(inbuf)
+    $call slist_clear, $(inbuf)
+
+subcode: bufchain_add(inbuf, data, len)
+    $if $(len)>0
+	$get_struct_var_prefix(sl) $(inbuf)
+	$(sl)n_total+=$(len)
+	&call slist_tail, $(inbuf)
+	    $call bufchain_add_copy
+	$while $(len)>0
+	    $call slist_push, $(inbuf), n_len=0, n_pos=0
+	    $call bufchain_add_copy
+
+subcode: bufchain_add_copy
+    tn_copylen=BUFFER_GRANULE-$(p)->n_len
+    $if tn_copylen>$(len)
+	tn_copylen=$(len)
+    memcpy($(p)->s_buf+$(p)->n_len, $(data), tn_copylen)
+    $(data)+=tn_copylen
+    $(len)-=tn_copylen
+
+#   bufchain chunk loop
+subcode: bufchain_chunk_loop(inbuf)
+    $call slist_set_macro, $(inbuf)
+    $while $(sl)n_total>0
+	&call bufchain_get, $(inbuf)
+	    BLOCK
+
+#   bufchain char loop
+subcode: bufchain_char_loop(inbuf, c)
+    $local tn_unget=-1
+    $local s
+    $local n_localbuf=0
+    $local s_localbuf[256]
+    $while 1
+	$if tn_unget !=-1
+	    $(c)=tn_unget
+	    tn_unget=-1
+	$else
+	    $if n_localbuf==0
+		&call bufchain_get, $(inbuf)
+		    memcpy(s_localbuf, ts_tmp, tn_len);
+		    n_localbuf=tn_len
+		    s=s_localbuf
+	    $if n_localbuf==0
+		break
+	    $(c)=(unsigned char)*s++
+	    n_localbuf--
+	BLOCK
+
+subcode: bufchain_unget(c)
+    tn_unget=$(c)
+
+subcode: bufchain_get(inbuf)
+    $get_struct_var_prefix(sl) $(inbuf)
+    &call slist_head, $(inbuf)
+	ts_tmp=$(p)->s_buf+$(p)->n_pos
+	tn_len=$(p)->n_len-$(p)->n_pos
+	$if tn_len > sizeof(s_localbuf)
+	    tn_len = sizeof(s_localbuf)
+
+	$(p)->n_pos+=tn_len
+	BLOCK
+	$(sl)n_total-=tn_len
+
+	$if $(p)->n_pos>=$(p)->n_len
+	    $(sl)head=$(sl)head->next
+
+

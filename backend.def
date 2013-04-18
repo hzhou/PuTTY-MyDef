@@ -1,0 +1,68 @@
+subcode:: _autoload
+    $declare int from_backend(char * ts_buf, int tn_len)
+
+    $call api_declare, backend, init, free, reconfig, send, size
+
+    $fntype char *(*init) (void * handle)
+    $fntype void (*free) (void * handle)
+    $fntype void (*reconfig) (void * handle)
+    $fntype int (*send)(void * handle, char * ts_buf, int tn_len)
+    $fntype void (*size)(void * handle, int tn_rows, int tn_cols)
+
+    $call api_create, null, backend
+    $call api_create, loop, backend
+
+# --------------------------------------------
+subcode: api_declare(name, @list)
+    $(export:$(name)_api=$(list))
+    $fntype const char * (*name)()
+    $(for:method in $(list))
+	$fntype void (*$(method)) (void * handle)
+    $struct($(name)) void * data, name, $(list)
+
+subcode: api_create(name, parent)
+    $struct($(parent)_$(name)) s_class
+
+    $function $(parent)_create_$(name) 
+	$return_type struct $(parent) *
+	$local struct $(parent) * p
+	$allocate p
+	$if p
+	    p->name=$(name)_name
+	    $(for:api in $($(parent)_api))
+		p->$(api)=$(name)_$(api)
+	    $local struct $(parent)_$(name) * this
+	    $allocate this
+	    $if this
+		this->s_class="$(parent)_$(name)"
+		p->data=this
+	    $else
+		free(p)
+		return NULL
+	return p
+
+    $function $(name)_name
+	return "$(name)"
+
+    $(for:api in $($(parent)_api))
+	$function $(name)_$(api), api
+	    $local struct $(parent)_$(name) * this
+	    this=(struct $(parent)_$(name) *)((struct $(parent) *)handle)->data
+	    $call @$(name)_$(api)
+	    $(if:notfound=1)
+		$call @$(parent)_$(api)
+
+# ----------------------------------------
+subcode: backend_init
+    return NULL
+
+subcode: backend_send
+    return 0
+
+subcode: backend_free
+    free(this)
+    free(handle)
+
+subcode: loop_send
+    return from_backend(ts_buf, tn_len)
+

@@ -1,0 +1,169 @@
+
+subcode: win_loop
+    $while 1
+	$local HANDLE * handles
+	$local n_handles, n
+	# global events
+	handles = handle_get_events(&n_handles);
+	n = MsgWaitForMultipleObjects(n_handles, handles, FALSE, INFINITE, QS_ALLINPUT)
+	$if (unsigned)(n - WAIT_OBJECT_0) < (unsigned)n_handles
+	    handle_got_event(handles[n - WAIT_OBJECT_0])
+	    sfree(handles);
+	    $if must_close_session
+		close_session()
+	$else
+	    sfree(handles)
+
+	# window events
+	$local MSG msg
+	$while PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)
+	    $if msg.message == WM_QUIT
+		goto finished
+
+	    $if !(IsWindow(logbox) && IsDialogMessage(logbox, &msg))
+		$call @TranslateMessage
+		DispatchMessage(&msg)
+	    $call @Async_Events
+	    $if must_close_session
+		close_session();
+
+	# pending events
+	$call term_focus, GetForegroundWindow() == hwnd
+
+	$call win_loop_pending_netevent
+
+subcode:: function_list
+    $list do_select
+
+/* * Set up, or shut down, an AsyncSelect. Called from winnet.c.  */
+fncode: do_select(SOCKET skt, tb_startup)
+    $return_type char *
+    $if !hwnd
+	return "do_select(): internal error (hwnd==NULL)";
+
+    $if tb_startup
+	$define(WM_NETEVENT) WM_APP+5
+	tn_msg = WM_NETEVENT;
+	tn_events = (FD_CONNECT | FD_READ | FD_WRITE | FD_OOB | FD_CLOSE | FD_ACCEPT);
+    $else
+	tn_msg = 0
+	tn_events = 0;
+
+    $if p_WSAAsyncSelect(skt, hwnd, tn_msg, tn_events) == SOCKET_ERROR
+	$if p_WSAGetLastError()
+	    return "Network is down";
+	$else
+	    return "WSAAsyncSelect(): unknown error";
+    return NULL;
+
+#----------------------------------------------------
+fncode: agent_schedule_callback(FnAgentSchedule callback, void *callback_ctx, void *data, int len)
+    $typedef void(* FnAgentSchedule)(void *, void *, int)
+    callback(callback_ctx, data, len)
+    /*
+    $struct(agent_callback) FnAgentSchedule callback, void * callback_ctx, void * data, int len
+    $local struct agent_callback * pcbk
+    pcbk = snew(struct agent_callback);
+    pcbk->callback = callback;
+    pcbk->callback_ctx = callback_ctx;
+    pcbk->data = data;
+    pcbk->len = len;
+    PostMessage(hwnd, WM_AGENT_CALLBACK, 0, (LPARAM)pcbk);
+    */
+
+/*
+subcode: main_on_WM_AGENT_CALLBACK
+    struct agent_callback *c = (struct agent_callback *)lParam;
+    c->callback(c->callback_ctx, c->data, c->len);
+    sfree(c);
+    return 0;
+*/
+# ----------------------------------------
+subcode:: function_list
+    $global b_pending_netevent=0, n_pend_netevent_wparam, n_pend_netevent_lparam
+    extern int select_result(WPARAM, LPARAM);
+    $list enact_pending_netevent
+    
+subcode: main_on_WM_NETEVENT
+    $if b_pending_netevent
+	enact_pending_netevent();
+    b_pending_netevent=1
+    n_pend_netevent_wparam = wparam;
+    n_pend_netevent_lparam = lparam;
+    $if WSAGETSELECTEVENT(lparam) != FD_READ
+	enact_pending_netevent()
+    net_pending_errors();
+    return 0;
+
+fncode: enact_pending_netevent
+    $local static b_reentering = 0;
+    $if b_reentering
+	return
+    b_pending_netevent = FALSE;
+
+    b_reentering = 1;
+    select_result(n_pend_netevent_wparam, n_pend_netevent_lparam);
+    b_reentering = 0;
+
+subcode: win_loop_pending_netevent
+    $if b_pending_netevent
+	enact_pending_netevent()
+    net_pending_errors()
+
+# -- term ------------------------------------
+subcode: term_focus(bool)
+    $global b_has_focus
+    b_has_focus=$(bool)
+
+subcode: term_size(row, col)
+    $global n_rows, n_cols
+    n_rows=$(row)
+    n_cols=$(col)
+    $declare void term_size(TERM, int, int)
+    term_size(term, n_rows, n_cols)
+    $if back
+	back->size(back, n_cols, n_rows)
+
+subcode:: function_list
+    $global struct backend  * back
+
+    $global int must_close_session, int session_closed
+
+    $list close_session, cleanup_exit
+
+fncode: close_session
+    session_closed = TRUE;
+    set_icon(NULL, "$(appname) inactive")
+    set_title(NULL, "$(appname) inactive")
+
+    $call line_discipline_free
+    $if back
+	back->free(back)
+	back = NULL;
+	update_specials_menu(NULL);
+    must_close_session = FALSE;
+
+    $call menu_add_restart
+
+subcode: create_window_size_limit
+    $local RECT rct_temp
+    $call get_fullscreen_rect, rct_temp
+    $if tn_w>rct_temp.right-rct_temp.left
+	tn_w=rct_temp.right-rct_temp.left
+    $if tn_h>rct_temp.bottom-rct_temp.top
+	tn_h=rct_temp.bottom-rct_temp.top
+
+# ===========================================================
+subcode:: function_list
+    $list show_mouseptr
+    $call optional_global
+
+fncode: show_mouseptr(b_show)
+    $local static b_cursor_visible=1
+    $if !cfg.hide_mouseptr
+	b_show = 1;
+    $if b_cursor_visible && !b_show
+	ShowCursor(FALSE);
+    $elif !b_cursor_visible && b_show
+	ShowCursor(TRUE);
+    b_cursor_visible = b_show;

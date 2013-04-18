@@ -1,0 +1,78 @@
+
+subcode:: global
+    $struct(clist) n_count, n_size, n_start, void ** p_list
+
+subcode: clist_create(p)
+    $get_type(type) $(p)
+    $(if:type=void)
+	$local struct clist * $(p)
+    $allocate $(p)
+    $(p)->n_count=0
+    $(p)->n_size=0
+    $(p)->n_start=0
+    $(p)->p_list=NULL
+
+subcode: clist_free(p, i)
+    $for i=0:$(p)->n_count
+	$call clist_shift, $(p), $(i)
+	BLOCK
+    $if $(p)->p_list
+	free($(p)->p_list)
+    free($(p))
+
+subcode: clist_expand(p, n)
+    $if $(n)>$(p)->n_size
+	$local void ** p_temp 
+	$allocate($(n)) p_temp
+	$if $(p)->p_list
+	    tn_idx=0
+	    $for i=$(p)->n_start:$(p)->n_size
+		p_temp[tn_idx++]=$(p)->p_list[i]
+	    $for i=0:$(p)->n_start
+		p_temp[tn_idx++]=$(p)->p_list[i]
+	    $local void ** p_temp2
+	    p_temp2=$(p)->p_list
+	    $(p)->p_list=p_temp
+	    $(p)->n_start=0
+	    free(p_temp2)
+
+subcode: clist_push(p, i)
+    $call assert, $(p)->n_count<$(p)->n_size
+    tn_pos=$(p)->n_start+$(p)->n_count
+    $if tn_pos>=$(p)->n_size
+	tn_pos-=$(p)->n_size
+    $(p)->p_list[tn_pos]=$(i)
+    $(p)->n_count++
+
+subcode: clist_pop(p, i)
+    $call assert, $(p)->n_count>0
+    tn_pos=$(p)->n_start+$(p)->n_count-1
+    $if tn_pos>=$(p)->n_size
+	tn_pos-=$(p)->n_size
+    $(i)=$(p)->p_list[tn_pos]
+    $(p)->n_count--
+
+subcode: clist_shift(p, i)
+    $call assert, $(p)->n_count>0
+    $(i)=$(p)->p_list[$(p)->n_start]
+    $(p)->n_start++
+    $if $(p)->n_start>=$(p)->n_size
+	$(p)->n_start=0
+    $(p)->n_count--
+
+subcode: clist_unshift(p, i)
+    $call assert, $(p)->n_count<$(p)->n_size
+    $(p)->n_start--
+    $if $(p)->n_start<0
+	$(p)->n_start=$(p)->n_size-1
+    $(p)->p_list[$(p)->n_start]=$(i)
+    $(p)->n_count++
+
+subcode: clist_index(p, idx, i)
+    $call assert, $(idx)>=0 && $(idx)<$(p)->n_count
+    tn_pos=$(p)->n_start+$(idx)
+    $if tn_pos>=$(p)->n_size
+	tn_pos-=$(p)->n_size
+    $(i)=$(p)->p_list[tn_pos]
+
+

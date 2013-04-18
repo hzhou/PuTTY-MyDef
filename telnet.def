@@ -1,0 +1,23 @@
+subcode:: global
+    $struct(telnet) Socket s, n_width, n_height
+    $list $(api_list:list:@telnet_$1)
+    $list backend_create_telnet
+
+subcode: init_data
+    $local struct telnet * data
+    data=(struct telnet *)((struct backend *)handle->data)
+
+fncode: telnet_init(void * handle)
+    $return_type char *
+    $local struct telnet * data
+    $allocate data
+    (struct backend *)handle->data=(void *)data
+
+    $call get_host_port
+    $call tcp_connect, ts_host, tn_port
+
+    return NULL
+
+subcode: get_host_port
+    ts_host="localhost"
+    tn_port=23

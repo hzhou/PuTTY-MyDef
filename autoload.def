@@ -1,0 +1,7 @@
+include: cfg.def
+include: backend.def
+
+page: autoload
+    autoload: write_h
+    subcode: main
+

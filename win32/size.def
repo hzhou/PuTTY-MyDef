@@ -1,0 +1,34 @@
+subcode:: WinMain_PreWindow
+    $call win_get_config, "rows", n_rows, 25
+    $call win_get_config, "cols", n_cols, 80
+
+    $global int font_width, int font_height
+    $global int extra_width, int extra_height
+    font_width = 10;
+    font_height = 20;
+    extra_width = 25;
+    extra_height = 28;
+
+    $global n_win_width, n_win_height
+    n_win_width = extra_width + font_width * n_cols
+    n_win_height = extra_height + font_height * n_rows
+
+    $global int offset_width, int offset_height
+    $call win_get_config, "window_border", tn_border, 40
+    offset_width = tn_border
+    offset_height = tn_border
+
+subcode:: WinMain_PreShow
+    #init_fonts(0,0)
+
+    $local RECT rct_cr
+    $local RECT rct_wr
+    GetWindowRect(hwnd_main, &rct_wr);
+    GetClientRect(hwnd_main, &rct_cr);
+    extra_width = rct_wr.right - rct_wr.left - rct_cr.right + rct_cr.left + offset_width*2;
+    extra_height = rct_wr.bottom - rct_wr.top - rct_cr.bottom + rct_cr.top +offset_height*2;
+
+    n_win_width = extra_width + font_width * n_cols
+    n_win_height = extra_height + font_height * n_rows
+
+    tn_ret=SetWindowPos(hwnd_main, NULL, 0, 0, n_win_width, n_win_height, SWP_NOMOVE | SWP_NOREDRAW | SWP_NOZORDER);
