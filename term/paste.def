@@ -40,7 +40,7 @@ subcode: clipme_get_lineend
     pos_lineend.x = term->cols;
 
     $if !(p_line->lattr & LATTR_WRAPPED)
-	$while pos_lineend.x && IS_SPACE_CHR(p_line->chars[pos_lineend.x - 1].chr) && !p_line->chars[pos_lineend.x - 1].cc_next && poslt(pos_top, pos_lineend))
+	$while pos_lineend.x && IS_SPACE_CHR(p_line->chars[pos_lineend.x - 1].chr) && poslt(pos_top, pos_lineend))
 	    decpos(pos_lineend);
 	$if poslt(pos_lineend, pos_bot)
 	    tb_need_newline = 1
@@ -60,20 +60,15 @@ subcode: clipme_get_line
 	    pos_top.x++;
 	    continue;
 
-	$while 1
-	    tn_char = p_line->chars[tn_x].chr;
-	    tn_attr = p_line->chars[tn_x].attr;
-	    $call decode_cset, tn_char
+	tn_char = p_line->chars[tn_x].chr;
+	tn_attr = p_line->chars[tn_x].attr;
+	$call decode_cset, tn_char
 
-	    $if DIRECT_FONT(tn_char)
-		$call clipme_add_directfont
-	    $else
-		$call clip_addchar, t_stclipbuf, tn_char, tn_attr
+	$if DIRECT_FONT(tn_char)
+	    $call clipme_add_directfont
+	$else
+	    $call clip_addchar, t_stclipbuf, tn_char, tn_attr
 
-	    $if p_line->chars[tn_x].cc_next
-		tn_x += p_line->chars[tn_x].cc_next;
-	    $else
-		break;
 	pos_top.tn_x++;
 
 subcode: clipme_add_directfont

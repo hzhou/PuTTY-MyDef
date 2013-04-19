@@ -40,8 +40,8 @@ subcode: set_fontweight
 	fw_bold = FW_BOLD;
 
 fncode: init_fonts(n_tw, n_th)
-    $call win_get_config, "font_name", s_font_name, NULL
-    #$call win_get_config, "font_name", s_font_name, "Consolas"
+    $call win_get_config, "font_name", s_fontname, NULL
+    #$call win_get_config, "font_name", s_fontname, "Consolas"
     $call win_get_config, "font_size", n_font_height, 0
     $call win_get_config, "font_isbold", b_font_bold, 0
     $for i=0:FONT_MAXNO
@@ -166,11 +166,12 @@ fncode: get_font_width(HDC hdc, TEXTMETRIC *tm)
     $else
 	$(mset:FIRST='0',LAST='9')
         $local ABCFLOAT abc_widths[$(LAST)-$(FIRST) + 1];
+	tn_abc=$(LAST)-$(FIRST)+1
 
         font_varpitch = TRUE;
         font_dualwidth = TRUE;
         $if GetCharABCWidthsFloat(hdc, $(FIRST), $(LAST), abc_widths)
-	    $for i=0:lenof(abc_widths)
+	    $for i=0:tn_abc
 		$(set:abc=abc_widths[i].abcf)
                 tn_width = (int)(0.5 + $(abc)A +$(abc)B + $(abc)C)
                 $if tn_width>0
@@ -220,25 +221,19 @@ fncode: another_font(n)
 
 # ---------------------------------------------------------------------
 subcode: dotext_process_attr
-    $if n_lattr != LATTR_NORM && x*2 >= n_cols
-	return;
-
-    $if n_attr & ATTR_UNDER && n_lattr != LATTR_TOP
+    $if n_attr & ATTR_UNDER
 	tb_do_underline=1
     $else
 	tb_do_underline=0
 
-    $if n_attr & TATTR_ACTCURS
+    $if n_attr & TATTR_CURSOR
 	n_attr &= ~(ATTR_REVERSE|ATTR_BLINK|ATTR_COLOURS);
 	$if bold_mode == BOLD_COLOURS
 	    n_attr &= ~ATTR_BOLD;
 	n_attr |= (260 << ATTR_FGSHIFT) | (261 << ATTR_BGSHIFT);
 
 subcode: dotext_position
-    $if n_lattr == LATTR_NORM
-	tn_fnt_width = font_width
-    $else
-	tn_fnt_width = font_width*2
+    tn_fnt_width = font_width
 
     tn_x=x*tn_fnt_width+offset_width
     tn_y=y*font_height+offset_height
@@ -316,16 +311,16 @@ subcode: dotext_buffer(name, len, type)
     $local static $(type) *$(name)_buf=NULL
     $local static int    $(name)_len=0
     $if $(name)_len<$(len)
-	sfree($(name)_buf)
+	free($(name)_buf)
 	$(name)_len=$(len)*9/8+16
-	$(name)_buf=snewn($(name)_len, $(type))
+	$allocate($(name)_len) $(name)_buf
 
 subcode: dotext_normal
     $call dotext_buffer, w, tn_len, WCHAR
     $for i=0:tn_len
 	w_buf[i] = text[i];
 
-    general_textout(hdc, tn_x, tn_y, &rct_line, w_buf, tn_len, lpDx_buf)
+    ExtTextOutW(hdc, tn_x, tn_y, ETO_CLIPPED, &rct_line, w_buf, tn_len, lpDx_buf);
 
     $if bold_mode == BOLD_SHADOW && (n_attr & ATTR_BOLD)
 	SetBkMode(hdc, TRANSPARENT);
@@ -352,8 +347,6 @@ subcode: dotext_direct
 
 subcode: dotext_underline
     tn_dec = font_descent;
-    $if n_lattr == LATTR_BOT
-	tn_dec = tn_dec * 2 - font_height;
 
     $call quick_pen, PS_SOLID, 0, color_fg
     MoveToEx(hdc, rct_line.left, rct_line.top + tn_dec, NULL);
@@ -380,9 +373,9 @@ subcode: dotext_to_dbcs
 
 # ===============================================================================
 subcode:: function_list
-    $list general_textout, do_text_internal, do_text, do_cursor
+    $list do_text_internal, do_text, do_cursor
 
-fncode: do_text_internal(int x, int y, wchar_t *text, n_len, unsigned long n_attr, n_lattr, b_opaque)
+fncode: do_text_internal(int x, int y, wchar_t *text, n_len, unsigned long n_attr)
     $local HDC hdc=cur_hdc
     $call dotext_process_attr
     $call dotext_position
@@ -398,6 +391,7 @@ fncode: do_text_internal(int x, int y, wchar_t *text, n_len, unsigned long n_att
     $call dotext_fg_bg
     $call dotext_fg_bg_color
     $call dotext_rct_line
+    b_opaque=1
     $call dotext_opaque
 
     # -------------------------------------------
@@ -413,8 +407,6 @@ fncode: do_text_internal(int x, int y, wchar_t *text, n_len, unsigned long n_att
 
     tn_x+=tn_xoffset
     tn_y+=tn_yoffset
-    $if n_lattr==LATTR_BOT
-	tn_y-=font_height
 
     tn_remain=n_len
     $while tn_remain>0
@@ -441,23 +433,49 @@ fncode: do_text_internal(int x, int y, wchar_t *text, n_len, unsigned long n_att
 subcode: paint_block
     $local HDC hdc
     hdc=GetDC(hwnd_main)
+    $global HDC cur_hdc
+    cur_hdc=hdc
     BLOCK
     ReleaseDC(hwnd_main, hdc);
 
-fncode: do_text(int x, int y, wchar_t *text, n_len, unsigned long n_attr, n_lattr)
+fncode: do_text(int x, int y, wchar_t *text, n_len, unsigned long n_attr)
     &call paint_block
-	# Wrapper that handles combining characters.
-	$if n_attr & TATTR_COMBINING
-	    n_attr&=~TATTR_COMBINING
-	    do_text_internal(x, y, text, 1, n_attr, n_lattr, 1);
-	    text++
-	    $for i=1:n_len
-		do_text_internal(x, y, text, 1, n_attr, n_lattr, 0);
-		text++;
-	$else
-	    do_text_internal(x, y, text, n_len, n_attr, n_lattr, 1);
+	do_text_internal(x, y, text, n_len, n_attr)
 
-# ----
+	$if n_attr & TATTR_CURSOR
+	    do_cursor(x, y, text, n_len, n_attr)
+
+# -------------------------------------------------------------
+fncode: do_cursor(int x, int y, wchar_t *text, n_len, unsigned long n_attr)
+    tb_cursor_active=0
+    $if b_has_focus && (n_attr & TATTR_C_BLINK)
+	tb_cursor_active=1
+
+    tb_cursor_right=(n_attr & TATTR_C_RIGHT)
+
+    hdc=cur_hdc
+    tn_cursor_type=0
+
+    $call dotext_position
+    COLORREF color_cursor=colours[261]
+
+    $if tn_cursor_type == 0
+	$call do_cursor_box
+    $else
+	$if tb_cursor_active
+	    BLOCK RELEASE
+	    $call quick_pen, PS_SOLID, color_cursor
+	$else
+	    BLOCK RELEASE
+	    $call quick_pen, PS_DOT, color_cursor
+
+	$if tn_cursor_type == 1
+	    $call do_cursor_under, font_descent, PS_SOLID
+	$elif tb_cursor_right
+	    $call do_cursor_vert, tn_char_width-1, PS_SOLID
+	$else
+	    $call do_cursor_vert, 0, PS_SOLID
+
 subcode: do_cursor_box
     $local POINT pts[5];
     pts[0].x = pts[1].x = tn_x;
@@ -476,68 +494,7 @@ subcode: do_cursor_under(yoff, ps)
     MoveToEx(hdc, tn_x, tn_y+$(yoff), NULL)
     LineTo(hdc, tn_x + tn_char_width, tn_y+$(yoff))
 
-fncode: do_cursor(int x, int y, wchar_t *text, n_len, unsigned long n_attr, n_lattr)
-    &call paint_block
-	tn_cursor_type=0
-
-	$if n_attr & TATTR_ACTCURS
-	    $if *text != UCSWIDE 
-		do_text(x, y, text, n_len, n_attr, n_lattr);
-		return;
-	    $else
-		tn_cursor_type = 2;
-		n_attr |= TATTR_RIGHTCURS;
-
-	$call dotext_position
-	COLORREF color_cursor=colours[261]
-
-	$if tn_cursor_type == 0
-	    $call do_cursor_box
-	$else
-	    $if n_attr & TATTR_ACTCURS
-		BLOCK RELEASE
-		$call quick_pen, PS_SOLID, color_cursor
-	    $else
-		BLOCK RELEASE
-		$call quick_pen, PS_DOT, color_cursor
-
-	    $if tn_cursor_type == 1
-		$call do_cursor_under, font_descent, PS_SOLID
-	    $elif n_attr & TATTR_RIGHTCURS
-		$call do_cursor_vert, tn_char_width-1, PS_SOLID
-	    $else
-		$call do_cursor_vert, 0, PS_SOLID
-
 # -----------------------------------------------
-fncode: general_textout(HDC hdc, int x, int y, CONST RECT *lprc, unsigned short *lpString, n_len, CONST INT *lpDx_buf)
-    tn_opt=ETO_CLIPPED
-    $if n_len>0
-	tn_x=x
-	tn_x_next=x
-
-	$for i=0;i<n_len;
-	    tb_rtl = is_rtl(lpString[i]);
-
-	    tn_x_next += lpDx_buf[i];
-
-	    $for j=i+1:n_len
-		$if tb_rtl != is_rtl(lpString[j])
-		    break;
-		$else
-		    tn_x_next += lpDx_buf[j];
-
-	    $if tb_rtl
-		tn_temp=(j-i)*2+2
-		$allocate(tn_temp,0) ts_idx
-		$call get_char_placement, lpString+i, j-i, ts_idx
-		ExtTextOut(hdc, tn_x, y, ETO_GLYPH_INDEX|tn_opt, lprc, ts_idx, j-i, lpDx_buf+i);
-		free(ts_idx)
-	    $else
-		ExtTextOutW(hdc, tn_x, y, tn_opt, lprc, lpString+i, j-i, font_varpitch ? NULL : lpDx_buf+i);
-
-	    i = j;
-	    tn_x = tn_x_next;
-
 subcode: get_char_placement(str, len, buf)
     $local GCP_RESULTSW gcpr;
     memset(&gcpr, 0, sizeof(gcpr));

@@ -3,6 +3,7 @@ include: win32/color.def
 
 fncode: WinMain
     $call @WinMain_Init
+    $call @win_init
     $call @WinMain_PreWindow
     $call wc_cursor, IDC_IBEAM
     $call register_wndclass, "$(appname)", WndProc_main
@@ -37,13 +38,11 @@ subcode:: WinMain_Init
 subcode:: WinMain_PreShow
     $call init_terminal
     #$call init_size
-    #$call init_caret
     #$call init_scrollbar
 
-    #$call start_backend
+    $call start_backend
+    $call @line_discipline_init
 
-    # setup line discipline
-    #$call line_discipline_init
     # set state
     #must_close_session = FALSE;
     #session_closed = FALSE;
@@ -93,14 +92,6 @@ subcode: create_window_style
     $if tb_sunken_edge
 	tn_wsex |= WS_EX_CLIENTEDGE;
 
-subcode: init_caret
-    $global HBITMAP caretbm
-    tn_size = (font_width + 15) / 16 * 2 * font_height;
-    $allocate(tn_size, 0) ts_bits
-    caretbm = CreateBitmap(font_width, font_height, 1, 1, ts_bits);
-    free(ts_bits);
-    CreateCaret(hwnd_main, caretbm, font_width, font_height);
-
 subcode: init_scrollbar
     $local SCROLLINFO si
     si.cbSize = sizeof(si);
@@ -114,7 +105,9 @@ subcode: init_scrollbar
 subcode: show_window
     ShowWindow(hwnd_main, n_cmdshow);
     SetForegroundWindow(hwnd_main);
-    $call term_focus, GetForegroundWindow() == hwnd_main
+    $global b_has_focus=0
+    $if GetForegroundWindow() == hwnd_main
+	b_has_focus=1
     UpdateWindow(hwnd_main);
 
 subcode: init_transparency
@@ -126,9 +119,10 @@ subcode: init_transparency
 subcode: init_terminal
     $global TERM term
     term = term_init()
-    $call term_size, 80, 25
+    $call @term_size, 80, 25
 
 subcode: start_backend
+    $global struct backend * back
     back=backend_create_loop()
     $call assert, back
     ts_err = back->init(back)
@@ -169,4 +163,19 @@ subcode: paint_background
     ExcludeClipRect(hdc, offset_width, offset_height, offset_width+font_width*n_cols, offset_height+font_height*n_rows);
     Rectangle(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom);
 
+
+# ---------------------------------
+subcode:: main_on_WM_SETFOCUS
+    $global b_has_focus
+    b_has_focus=1
+    term_update(term);
+
+subcode:: main_on_WM_KILLFOCUS
+    $global b_has_focus
+    b_has_focus=0
+    term_update(term);
+
+# ===========================================================
+subcode:: win_init
+    $call win_get_config, "hide_mouseptr", b_hide_mouseptr, 1
 

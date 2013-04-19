@@ -16,41 +16,27 @@ subcode: newline(n, char)
 	p_line->chars[j] = $(char)
     p_line->cols = p_line->size = $(n)
     p_line->lattr = LATTR_NORM
-    p_line->cc_free = 0;
 
 subcode: freeline(p_line)
     $if $(p_line)
 	free($(p_line)->chars)
 	free($(p_line))
 
-sucode: p_line_resize
-    p_line->chars=(termchar *)realloc(p_line->chars, p_line->size*sizeof(termchar))
-
 fncode: resizeline(Terminal *term, termline *p_line, tn_cols)
-    tn_cols_old = p_line->cols;
-    $if tn_cols_old < tn_cols
+    $if p_line->size < tn_cols
 	# -- expand --------
-	p_line->size += tn_cols - tn_cols_old;
+	p_line->size = tn_cols
 	$call p_line_resize
-	p_line->cols = tn_cols
-	memmove(p_line->chars+tn_cols, p_line->chars+tn_cols_old, (p_line->size-p_line->cols) * sizeof(termchar));
-	$for i=tn_cols_old:tn_cols
+	$for i=p_line->cols:p_line->size
 	    p_line->chars[i] = $.basic_erase_char;
 
-    $elif tn_cols_old > tn_cols
-	$for i=tn_cols:tn_cols_old
-	    clear_cc(p_line, i);
-	memmove(p_line->chars+tn_cols, p_line->chars+tn_cols_old, (p_line->size-p_line->cols) * sizeof(termchar));
-	p_line->size += tn_cols - tn_cols_old;
-	$call p_line_resize
-	p_line->cols = tn_cols
+    $elif p_line->size > tn_cols
+	# $call p_line_resize
 
-    $if p_line->cols != tn_cols
-	$for i = 0; i < tn_cols_old && i < tn_cols; i++
-	    $if p_line->chars[i].cc_next
-		p_line->chars[i].cc_next += tn_cols - tn_cols_old;
-	$if p_line->cc_free
-	    p_line->cc_free += tn_cols - tn_cols_old;
+    p_line->cols = tn_cols
+
+sucode: p_line_resize
+    p_line->chars=(termchar *)realloc(p_line->chars, p_line->size*sizeof(termchar))
 
 # -- remove ucswide char at x, y
 # --     clear LATTR_WRAPPED2?
@@ -62,8 +48,6 @@ fncode: check_boundary(Terminal *term, int x, int y)
     $if x == $.cols
 	p_line->lattr &= ~LATTR_WRAPPED2;
     $elif p_line->chars[x].chr == UCSWIDE
-	clear_cc(p_line, x-1);
-	clear_cc(p_line, x);
 	p_line->chars[x-1].chr = ' ' | CSET_ASCII;
 	p_line->chars[x] = p_line->chars[x-1];
 
@@ -105,108 +89,37 @@ subcode: cmp_attr(a, b)
 fncode: termchars_equal_override(termchar *a, termchar *b, unsigned long bchr, unsigned long battr)
     $call cmp_chr, a->chr, bchr
     $call cmp_attr, a->attr, battr
-    return cmp_cc(a, b)
+    return 1
 
 fncode: termchars_equal(termchar *a, termchar *b)
     $call cmp_chr, a->chr, b->chr
     $call cmp_attr, a->attr, b->attr
-    return cmp_cc(a, b)
+    return 1
 
 # ----------
 fncode: copy_termchar(termline *p_line, int x, termchar *p_char)
-    clear_cc(p_line, x);
     p_line->chars[x] = *p_char
-    p_line->chars[x].cc_next = 0
-    $while p_char->cc_next
-	p_char += p_char->cc_next;
-	add_cc(p_line, x, p_char->chr);
 
 subcode: erase_termchar(x)
-    clear_cc(p_line, $(x));
     p_line->chars[$(x)] = $.erase_char
 
 subcode: set_termchar(p_line, x, c)
-    clear_cc($(p_line), $(x))
     $(p_line)->chars[$(x)].chr = $(c)
-    $(p_line)->chars[$(x)].attr = $.curr_attr
+    $(p_line)->chars[$(x)].attr = $.attr
 
 # Move a character cell within its termline. 
 fncode: move_termchar(termline *p_line, termchar *dest, termchar *src)
-    clear_cc(p_line, dest - p_line->chars);
     *dest = *src
-    $if src->cc_next
-	dest->cc_next = src->cc_next - (dest-src);
-    src->cc_next = 0;
 
 # ---- Erase Char -----------------------------------
 subcode:: on_term_init
     $map term_decl, termchar basic_erase_char, termchar erase_char
     $.basic_erase_char.chr = CSET_ASCII | ' ';
     $.basic_erase_char.attr = ATTR_DEFAULT;
-    $.basic_erase_char.cc_next = 0;
     $.erase_char = $.basic_erase_char;
 
 subcode:: power_on
     $.erase_char = $.basic_erase_char;
-
-# ---- Combining Character ----------------------------
-subcode:: function_list
-    $(set:cc_next=p_line->chars[$(1)].cc_next)
-    $(set:cc_free=p_line->cc_free)
-    $list add_cc, clear_cc, cmp_cc
-
-fncode: add_cc(termline *p_line, int col, unsigned long chr)
-    assert(col >= 0 && col < p_line->cols);
-    $call cc_get_free, tn_free_x
-    p_line->chars[tn_free_x].cc_next = 0;
-    p_line->chars[tn_free_x].chr = chr;
-    $call cc_merge, col, tn_free_x
-
-fncode: clear_cc(termline *p_line, int col)
-    assert(col >= 0 && col < p_line->cols);
-    $if !$(cc_next:col)
-	return
-    $call cc_merge, col, $(cc_free)
-    $(cc_free) = col + $(cc_next:col)
-    $(cc_next:col)=0
-
-fncode: cmp_cc(termchar *p_char_a, termchar * p_char_b)
-    $while p_char_a->cc_next || p_char_b->cc_next
-	$if !p_char_a->cc_next || !p_char_b->cc_next
-	    return 0
-	p_char_a += p_char_a->cc_next;
-	p_char_b += p_char_b->cc_next;
-	$if p_char_a->chr != p_char_b->chr
-	    return 0
-    return 1
-
-# ----
-# p_line->cc_free is a linked list of free cells
-subcode: cc_free_expand
-    tn_old_size = p_line->size;
-    p_line->size += 16 + (p_line->size - p_line->cols) / 2;
-    $call p_line_resize
-    p_line->cc_free = tn_old_size
-    $for i=tn_old_size:p_line->size-1
-	$(cc_next:i) = 1;
-    $(cc_next:i) = 0;
-
-subcode: cc_merge(x1, x2)
-    # merget linked list of x1 and x2 into a long list of x1
-    $if $(x2)
-	tn_x=$(x1)
-	$while $(cc_next:tn_x)
-	    tn_x += $(cc_next:tn_x)
-	$(cc_next:tn_x) = $(x2) - tn_x;
-
-subcode: cc_get_free(x)
-    $if !$(cc_free)
-	$call cc_free_expand
-    $(x) = $(cc_free)
-    $if $(cc_next:$(x))
-	$(cc_free) = $(x) + $(cc_next:$(x))
-    $else
-	$(cc_free) = 0;
 
 # ---- Clear Screen--------------------------------------------
 subcode: erase_screen(mode)

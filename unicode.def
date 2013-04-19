@@ -1,8 +1,8 @@
 include: macro/charset.def
 
-page: ucs_inc
-    output_dir: windows
+page: unicode
     subcode: main
+	$include "unicode.data"
 	$call function_list
 
 subcode:: function_list
@@ -419,4 +419,35 @@ fncode: wordtype(tn_code)
 	    $if tn_code >= p_item->start && tn_code <= p_item->end
 		return p_item->ctype;
     return 2
+
+# Cell Width #####################################################
+subcode:: function_list
+    $list in_interval, mk_wcwidth
+
+fncode: in_interval(n_code, const int table[][2], n_max)
+    $if n_code<table[0][0] || n_code>table[n_max][1]
+	return 0
+    tn_min=0
+    tn_max=n_max
+    $while tn_max>=tn_min
+	tn_mid=(tn_max+tn_min)/2
+	$if n_code>table[tn_mid][1]
+	    tn_min=tn_mid+1
+	$elif n_code<table[tn_mid][0]
+	    tn_max=tn_mid-1
+	$else
+	    return 1
+    return 0
+
+fncode: mk_wcwidth(n_code)
+    $if n_code==0
+	return 0
+    $elif n_code<32 || (n_code >= 0x7f && n_code<0xa0)
+	return -1
+    $elif in_interval(n_code, ucs_combining, N_ucs_combining)
+	return 0
+    $elif in_interval(n_code, ucs_doublewidth, N_ucs_doublewidth)
+	return 2
+    $else
+	return 1
 

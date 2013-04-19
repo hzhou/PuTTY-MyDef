@@ -2,10 +2,6 @@ subcode:: function_list
     $define(CTRL(x)) (x^'@')
     $define(KCTRL(x)) ((x^'@')|0x100)
 
-    # $define(ECHOING) (cfg.localecho==FORCE_ON||(cfg.localecho==AUTO&&(back->ldisc(backhandle,LD_ECHO))))
-    # $define(EDITING) (cfg.localedit==FORCE_ON||(cfg.localedit==AUTO&&(back->ldisc(backhandle,LD_EDIT))))
-    #$define(in_utf) line_codepage==CP_UTF8
-
 subcode: c_write(buf, len)
     term_data(term, $(buf), $(len))
 
@@ -17,30 +13,17 @@ subcode:: function_list
     $define(EDITING) 0
     $define(ECHOING) 0
     $define(in_utf) 1
-    $list ldisc_update, linedisc_send, linedisc_send_special, ldisc_edit
+    $list linedisc_send
     $list get_plen, do_pwrite
 
 subcode: line_discipline_init
 
 subcode: line_discipline_free
     $if s_ldisc_buf
-	sfree(s_ldisc_buf)
+	free(s_ldisc_buf)
 
-fncode: ldisc_update(void * frontend, int echo, int edit)
-#fncode: ldisc_update
-    $call @line_discipline_update
-    return
-
-fncode: linedisc_send(s_buf, n_len)
-    $if !back
-	return
-    $if n_len>0
-	$if EDITING
-	    ldisc_edit(s_buf, n_len)
-	$else
-	    $if ECHOING
-		$call c_write, s_buf, n_len
-	    back->send(backhandle, s_buf, n_len)
+subcode:: function_list
+    $list linedisc_send_special, ldisc_edit
 
 fncode: linedisc_send_special(s_buf, n_len)
     $if EDITING
@@ -50,9 +33,18 @@ fncode: linedisc_send_special(s_buf, n_len)
     $elif strcmp(back->name(), "telnet")==0 && n_len == 1
 	$call ldisc_telnet_special
     $else
-	back->send(backhandle, s_buf, n_len)
+	back->send(back, s_buf, n_len)
 
 # ------------------------------------------------------
+subcode: line_discipline_edit
+    $if EDITING
+	ldisc_edit(s_buf, n_len)
+	return
+
+subcode: line_discipline_echo
+    $if ECHOING
+	$call c_write, s_buf, n_len
+
 fncode: ldisc_edit(s_buf, n_len)
     $while n_len--
 	tn_char = (unsigned char)(*s_buf++) + b_ldisc_special
@@ -106,14 +98,14 @@ subcode: ldisc_do_default
 
 subcode: ldisc_do_magic_ctrl_M
     $if n_ldisc_len > 0
-	back->send(backhandle, s_ldisc_buf, n_ldisc_len);
+	back->send(back, s_ldisc_buf, n_ldisc_len);
 
     $if cfg.protocol == PROT_RAW
-	back->send(backhandle, "\r\n", 2);
+	back->send(back, "\r\n", 2);
     $elif cfg.protocol == PROT_TELNET && cfg.telnet_newline
-	back->special(backhandle, TS_EOL);
+	back->special(back, TS_EOL);
     $else
-	back->send(backhandle, "\r", 1);
+	back->send(back, "\r", 1);
 
     $if ECHOING
 	$call c_write, "\r\n", 2

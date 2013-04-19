@@ -57,7 +57,7 @@ subcode: main_on_WM_SYSKEYDOWN
     # -- Alt+Enter
     $if wparam == VK_RETURN && cfg.fullscreenonaltenter && (cfg.resize_action != RESIZE_DISABLED)
 	$if $(nkf:REPEAT)
-	    $call flip_full_screen
+	    $call @flip_full_screen
 	return 0
     $call ignore_alt_only
 
@@ -82,7 +82,7 @@ subcode: main_on_WM_IME_COMPOSITION
 	$local_allocate(n) ts_buff
 	ImmGetCompositionStringW(hIMC, GCS_RESULTSTR, ts_buff, n);
 	term_seen_key_event(term);
-	$for i=0;i<n;i+=2
+	$for i=0:n:2
 	    linedisc_send_unicode((unsigned short *)(ts_buff+i), 1)
     ImmReleaseContext(hwnd, hIMC);
     return 1;

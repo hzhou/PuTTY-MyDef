@@ -43,9 +43,13 @@ fncode: term_update_on_timer(Terminal *term, long time_now)
 
 # ----
 subcode: term_start_text_blink
-    # schedule_timer(TBLINK_DELAY, term_text_blink_on_timer, term)
+    $call term_get_config, "blink_is_real", b_blink_is_real, 0
+    $if $.b_blink_is_real
+	schedule_timer(TBLINK_DELAY, term_text_blink_on_timer, term)
 subcode: term_start_cursor_blink
-    # schedule_timer(CBLINK_DELAY, term_cursor_blink_on_timer, term)
+    $call term_get_config, "blink_cur", b_blink_cur, 0
+    $if $.b_blink_cur
+	schedule_timer(CBLINK_DELAY, term_cursor_blink_on_timer, term)
 subcode: term_start_vbell
     $if !$.in_vbell
 	$.in_vbell = 1

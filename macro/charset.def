@@ -61,7 +61,7 @@ subcode: encode_cset(c, cset)
 # used in init_font(w,h)
 subcode: init_linedraw
     $declare void update_ucs_linedraw(int n_vtmode);
-    update_ucs_linedraw(cfg.vtmode)
+    #update_ucs_linedraw(cfg.vtmode)
 
 # used in fncode: char_width(hdc, c)
 # used in term/paste.def
@@ -113,8 +113,6 @@ subcode: linedraw_adjust
 	  case 0xBD:
 	    tn_yoffset = 2 * font_height / 5;
 	    break;
-	$if n_lattr == LATTR_TOP || n_lattr == LATTR_BOT
-	    tn_yoffset *= 2;
 
 	text[0] = unitab_draw['q'];
 	$if tb_do_underline

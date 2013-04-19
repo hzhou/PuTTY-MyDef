@@ -131,23 +131,12 @@ fncode: compressline(termline *p_line)
     $local termchar *p_chars
     p_chars=p_line->chars
 
-    $if p_line->cc_free
-	tn_free=p_line->cc_free
-	$while tn_free
-	    $call clear_pchar_free
-	    $if p_chars[tn_free].cc_next
-		tn_free+=p_chars[tn_free].cc_next
-	    $else
-		break
-
     $call buf_init
     $call buf_add_int, p_line->cols
     $call buf_add_int, p_line->lattr
-    $call buf_add_int, p_line->size
-    $call buf_add_int, p_line->cc_free
     $call buf_rle_start
     $for j=0:sizeof(termchar)
-	$for i=0:p_line->size
+	$for i=0:p_line->cols
 	    pc_temp=(unsigned char *)(p_line->chars+i)
 	    $call buf_rle_push, pc_temp[j]
     pc_line=realloc(pc_buf_data, tn_buf_pos+1)
@@ -162,8 +151,7 @@ fncode: decompressline(void * buf)
     $allocate p_line
     $call buf_get_int, p_line->cols
     $call buf_get_int, p_line->lattr
-    $call buf_get_int, p_line->size
-    $call buf_get_int, p_line->cc_free
+    p_line->size=p_line->cols
     $allocate(p_line->size) p_line->chars
     $local termchar *p_chars
     p_chars=p_line->chars
@@ -180,7 +168,7 @@ subcode: debug_p_line
     p_chars=p_line->chars
     $dump(debug) p_line->cols, p_line->size
     $for i=0:p_line->cols
-	printf("%d - %08x - %08x - %d ", i, p_chars[i].chr, p_chars[i].attr, p_chars[i].cc_next)
+	printf("%d - %08x - %08x ", i, p_chars[i].chr, p_chars[i].attr)
 	$if i % 2 ==1
 	    printf("\n")
 

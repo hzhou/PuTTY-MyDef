@@ -1,14 +1,12 @@
 subcode:: on_term_init
     $map term_decl, int disptop
     $map term_decl, termline **disp, int dispcursx, int dispcursy
-    $map term_decl, int curstype, int cursor_on, int rvideo, int blink_is_real, int scroll_on_disp
+    $map term_decl, int curstype, int cursor_on, int rvideo, int scroll_on_disp
     $.disp=NULL
     $.dispcursx = -1
     $.dispcursy = -1
     $.curstype = 0;
-    $call term_get_config, "blink_is_real", b_blink_is_real, 1
     $call term_get_config, "scroll_on_disp", b_scroll_on_disp, 1
-    $call term_get_config, "blink_cur", b_blink_cur, 1
 
 subcode:: on_term_finish
     $if $.disp
@@ -72,11 +70,6 @@ fncode: term_update(Terminal *term)
     do_paint(term);
     #sys_cursor(NULL,  $.curs.x, $.curs.y - $.disptop);
 
-subcode: update_sbar
-    tn_scroll = $.n_scrollback_count
-    $declare void front_set_scrollbar(int, int, int)
-    front_set_scrollbar(tn_scroll + $.rows, tn_scroll + $.disptop, $.rows);
-
 # ============================================================
 fncode: do_paint(Terminal *term)
     $global extern int font_isdbcs
@@ -107,12 +100,10 @@ subcode: do_paint_fill_newline
 	$call decode_cset_1, tn_char
 	$call do_paint_check_ucswide
 	$call do_paint_check_reverse
-	$call do_paint_check_blink
 	$call do_paint_check_charwidth
 	/* FULL-TERMCHAR */
 	p_newline[j].attr = tn_attr;
 	p_newline[j].chr = tn_char;
-	p_newline[j].cc_next = 0;
 
 subcode: do_paint_check_disp
     tn_laststart = 0
@@ -149,7 +140,6 @@ subcode: do_paint_process_line
 		tb_last_run_dirty = tb_dirty_run;
 
 	$call do_paint_draw_add, tn_char
-	$call do_paint_draw_add_cc
 	$call do_paint_copy_to_disp
 
     $if tb_dirty_run && tn_count > 0
@@ -162,15 +152,11 @@ subcode: do_paint_cursor
     $call do_paint_cursor_invalid_old
 
 subcode: do_paint_cursor_attr
-    $global extern b_has_focus
     tn_cursor_attr=0
     $if $.cursor_on
-	$if b_has_focus && ($.cblinker || !$.b_blink_cur)
-	    tn_cursor_attr = TATTR_ACTCURS;
-	$else
-	    tn_cursor_attr = TATTR_PASCURS;
+	tn_cursor_attr = TATTR_CURSOR
 	$if $.wrapnext
-	    tn_cursor_attr |= TATTR_RIGHTCURS;
+	    tn_cursor_attr |= TATTR_C_RIGHT
 
 subcode: do_paint_cursor_xy
     tn_curs_y = $.curs.y - $.disptop;
@@ -204,12 +190,6 @@ subcode: do_paint_check_reverse
     $call @do_paint_selection, srcpos, tn_attr
     tb_rv = (!$.rvideo ^ !$.in_vbell ? ATTR_REVERSE : 0);
     tn_attr = tn_attr ^ tb_rv ^ (tb_selected ? ATTR_REVERSE : 0)
-
-subcode: do_paint_check_blink
-    $if $.blink_is_real && (tn_attr & ATTR_BLINK)
-	$if b_has_focus && $.tblinker
-	    $call get_blank_char, tn_char
-	tn_attr &= ~ATTR_BLINK;
 
 subcode: do_paint_check_charwidth
     $if tn_char != $(disp).chr || tn_attr != ($(disp).attr &~(ATTR_NARROW | DATTR_MASK))
@@ -259,9 +239,6 @@ subcode: do_paint_check_break_run
     $if CSET_OF(tn_char) != tn_cset_temp
 	tb_break_run = TRUE;
 
-    $if p_chars[j].cc_next != 0 || (j > 0 && p_chars[j-1].cc_next != 0)
-	tb_break_run = TRUE;
-
     $if !font_isdbcs && !tb_dirty_line
 	$if $(disp).chr == tn_char && ($(disp).attr &~ DATTR_MASK) == tn_attr
 	    tb_break_run = TRUE;
@@ -272,17 +249,6 @@ subcode: do_paint_check_break_run
 subcode: do_paint_draw_add(char)
     $call check_paint_buffer, tn_count
     p_chlist[tn_count++] = (wchar_t) $(char)
-
-subcode: do_paint_draw_add_cc
-    $if p_chars[j].cc_next
-	termchar * p_char_cc = p_chars+j
-	$while p_char_cc->cc_next
-	    $local unsigned long tn_char_cc
-	    p_char_cc += p_char_cc->cc_next;
-	    tn_char_cc = p_char_cc->chr;
-	    $call decode_cset_1, tn_char_cc
-	    $call do_paint_draw_add, tn_char_cc
-	tn_attr_temp |= TATTR_COMBINING
 
 subcode: do_paint_copy_to_disp
     $if !termchars_equal_override(&$(disp), &p_chars[j], tn_char, tn_attr)
@@ -295,7 +261,7 @@ subcode: do_paint_copy_to_disp
     $if tn_attr & ATTR_WIDE
 	j++
 	$if j < $.cols
-	    assert(!(i == tn_curs_y && j == tn_curs_x));
+	    $call assert, !(i == tn_curs_y && j == tn_curs_x)
 	    $if !termchars_equal(&$(disp), &p_chars[j])
 		tb_dirty_run = TRUE;
 		copy_termchar($.disp[i], j, &p_chars[j])
@@ -304,6 +270,17 @@ subcode: do_paint_copy_to_disp
 subcode: do_paint_draw
     $define(LATTR_MODE) 0x3
     tn_attr_temp |= ((p_line->lattr)&0x3)<<24
+    $if $.cblinker
+	tn_attr_temp |= TATTR_C_BLINK
+    $if $.tblinker
+	tn_attr_temp |= TATTR_T_BLINK
     $pack $.s_paint_buffer, "4444", tn_start, i, tn_attr_temp, tn_count
     from_terminal("text", $.s_paint_buffer)
+
+subcode: update_sbar
+    tn_total=$.n_scrollback_count+$.rows
+    tn_pos=$.n_scrollback_count+$.disptop
+    tn_page=$.rows
+    $pack $.s_paint_buffer, "444", tn_total, tn_pos, tn_page
+    from_terminal("scrollbar", $.s_paint_buffer)
 

@@ -95,7 +95,7 @@ fncode: sel_spread_half(Terminal *term, pos p, int tn_dir)
 subcode: sel_spread_char
     $if !(p_line->lattr & LATTR_WRAPPED)
 	termchar *q = p_line->chars + $.cols;
-	$while q>p_line->chars && IS_SPACE_CHR(q[-1].chr) && !q[-1].cc_next
+	$while q>p_line->chars && IS_SPACE_CHR(q[-1].chr) 
 	    q--
 	$if q == p_line->chars + $.cols
 	    q--

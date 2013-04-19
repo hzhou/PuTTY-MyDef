@@ -1,7 +1,7 @@
 # ---- frontend functions ---------------------------------------
 subcode:: function_list
     $list do_beep
-    $list set_title, set_icon, front_set_scrollbar
+    $list set_title, set_icon
 
 fncode: set_title(void *frontend, ts_title)
     sfree(window_name);
@@ -17,21 +17,6 @@ fncode: set_icon(void *frontend, ts_title)
     strcpy(icon_name, ts_title);
     if (!cfg.win_name_always && IsIconic(hwnd))
 	SetWindowText(hwnd, ts_title);
-
-fncode: front_set_scrollbar(tn_total, tn_pos, tn_pagesize)
-    $local SCROLLINFO si
-
-    $if is_full_screen() ? !cfg.scrollbar_in_fullscreen : !cfg.scrollbar
-	return;
-
-    si.cbSize = sizeof(si);
-    si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
-    si.nMin = 0;
-    si.nMax = tn_total - 1
-    si.nPage = tn_pagesize
-    si.nPos = tn_pos
-    $if hwnd
-	SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
 
 # ----
 subcode: default_beep
@@ -124,46 +109,6 @@ static BOOL flash_window_ex(DWORD dwFlags, UINT uCount, DWORD dwTimeout)
 */
 
 # ----------------------------------
-subcode: function_list
-    $global int caret_x, int caret_y
-    $list sys_cursor, sys_cursor_update
-
-subcode: sys_cursor_skip
-    $if b_has_focus
-	return
-
-fncode: sys_cursor(void * frontend, int x, int y)
-    $call sys_cursor_skip
-    tn_cx=x*font_width+offset_width
-    tn_cy=y*font_height+offset_height
-    $if tn_cx!=caret_x || tn_cy!=caret_y
-	sys_cursor_update()
-
-fncode: sys_cursor_update
-    $local COMPOSITIONFORM cf
-    $local HIMC hIMC
-
-    $call sys_cursor_skip
-
-    if (caret_x < 0 || caret_y < 0)
-	return;
-
-    SetCaretPos(caret_x, caret_y);
-
-    /* IMM calls on Win98 and beyond only */
-    if(osVersion.dwPlatformId == VER_PLATFORM_WIN32s) return; /* 3.11 */
-    
-    if(osVersion.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS && osVersion.dwMinorVersion == 0) return; /* 95 */
-
-    /* we should have the IMM functions */
-    hIMC = ImmGetContext(hwnd);
-    cf.dwStyle = CFS_POINT;
-    cf.ptCurrentPos.x = caret_x;
-    cf.ptCurrentPos.y = caret_y;
-    ImmSetCompositionWindow(hIMC, &cf);
-
-    ImmReleaseContext(hwnd, hIMC);
-
 #---- Always on top ----------------------------------------------------------
 subcode: on_IDM_VISIBLE
     $local HMENU hmenu_temp
@@ -243,4 +188,62 @@ subcode: main_on_WM_POWERBROADCAST:
 		    close_session();
 		break;
     break;
+
+# ---------------------------------
+subcode:: WinMain_PreShow
+    $call init_caret
+subcode:: main_on_WM_SETFOCUS
+    CreateCaret(hwnd, caretbm, font_width, font_height);
+    ShowCaret(hwnd);
+subcode:: main_on_WM_KILLFOCUS
+    $global int caret_x, int caret_y
+    DestroyCaret();
+    caret_x = caret_y = -1 # ensure caret is replaced next time 
+
+subcode: init_caret
+    $global HBITMAP caretbm
+    tn_size = (font_width + 15) / 16 * 2 * font_height;
+    $allocate(tn_size, 0) ts_bits
+    caretbm = CreateBitmap(font_width, font_height, 1, 1, ts_bits);
+    free(ts_bits);
+    CreateCaret(hwnd_main, caretbm, font_width, font_height);
+
+subcode:: function_list
+    $list sys_cursor, sys_cursor_update
+
+subcode: sys_cursor_skip
+    $if b_has_focus
+	return
+
+fncode: sys_cursor(void * frontend, int x, int y)
+    $call sys_cursor_skip
+    tn_cx=x*font_width+offset_width
+    tn_cy=y*font_height+offset_height
+    $if tn_cx!=caret_x || tn_cy!=caret_y
+	sys_cursor_update()
+
+fncode: sys_cursor_update
+    $local COMPOSITIONFORM cf
+    $local HIMC hIMC
+
+    $call sys_cursor_skip
+
+    if (caret_x < 0 || caret_y < 0)
+	return;
+
+    SetCaretPos(caret_x, caret_y);
+
+    /* IMM calls on Win98 and beyond only */
+    if(osVersion.dwPlatformId == VER_PLATFORM_WIN32s) return; /* 3.11 */
+    
+    if(osVersion.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS && osVersion.dwMinorVersion == 0) return; /* 95 */
+
+    /* we should have the IMM functions */
+    hIMC = ImmGetContext(hwnd);
+    cf.dwStyle = CFS_POINT;
+    cf.ptCurrentPos.x = caret_x;
+    cf.ptCurrentPos.y = caret_y;
+    ImmSetCompositionWindow(hIMC, &cf);
+
+    ImmReleaseContext(hwnd, hIMC);
 

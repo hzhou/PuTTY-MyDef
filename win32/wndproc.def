@@ -16,20 +16,6 @@ subcode: main_on_WM_DESTROY
     PostQuitMessage(0)
     return 0
 
-subcode:: main_on_WM_SETFOCUS
-    $call term_focus, 1
-    CreateCaret(hwnd, caretbm, font_width, font_height);
-    ShowCaret(hwnd);
-    flash_window(0);
-    term_update(term);
-
-subcode: main_on_WM_KILLFOCUS
-    show_mouseptr(1);
-    $call term_focus, 0
-    DestroyCaret();
-    caret_x = caret_y = -1 # ensure caret is replaced next time 
-    term_update(term);
-
 #---- Paint -------------------------------------------------------
 # -- Commands -------------------------------------------------------
 subcode: on_IDM_SHOWLOG

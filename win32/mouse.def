@@ -3,6 +3,25 @@ subcode:: WinMain_PreShow
 
 #---- Mouse -------------------------------------------------------
 subcode:: function_list
+    $list show_mouseptr
+
+fncode: show_mouseptr(b_show)
+    $local static b_cursor_visible=1
+    $if !b_hide_mouseptr
+	b_show = 1;
+    $if b_cursor_visible && !b_show
+	ShowCursor(FALSE);
+    $elif !b_cursor_visible && b_show
+	ShowCursor(TRUE);
+    b_cursor_visible = b_show;
+
+subcode:: main_on_WM_SETFOCUS
+
+subcode:: main_on_WM_KILLFOCUS
+    show_mouseptr(1);
+
+# -----------------------------------
+subcode:: function_list
     $global n_busy_status=BUSY_NOT
     $global n_send_raw_mouse=0
     $list set_busy_status, update_mouse_pointer

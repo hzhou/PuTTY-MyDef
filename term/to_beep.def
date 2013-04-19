@@ -11,6 +11,7 @@ subcode: term_on_key_event
     $call slist_clear, sl_beep
 
 subcode: term_do_BEL
+subcode: term_do_BEL_bak
     $call seen_disp_event
 
     $local unsigned long tn_ticks

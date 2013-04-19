@@ -1,8 +1,7 @@
 # ---- Char Out ----------------------------------------
 subcode:: on_term_init
-    $map term_decl, int wrap, int insert, int cjk_ambig_wide
+    $map term_decl, int wrap, int insert
     $.wrap=1
-    $.cjk_ambig_wide=1
 
 subcode:: on_term_power_on
     $call get_config, "wrap_mode", $.wrap, 1
@@ -15,7 +14,8 @@ subcode: term_do_CHAR
     $if DIRECT_CHAR(c)
 	tn_width = 1
     $else
-	tn_width = ($.cjk_ambig_wide ?  mk_wcwidth_cjk((wchar_t) c) : mk_wcwidth((wchar_t) c));
+	$declare int mk_wcwidth(int)
+	tn_width = mk_wcwidth((wchar_t) c)
 
     # -- next line ----
     $if $.wrapnext && $.wrap && tn_width > 0 
@@ -39,15 +39,20 @@ subcode: term_do_CHAR
 	$call term_char_out_inc_curs
 	$call seen_disp_event
 
+# Combining characters
+# There appears to be limited cases for this
+# Rather than adding 50% more complexity, maybe we could simply 
+#   utilize a few bits in attributes?
 subcode: term_char_out_cc
     $if $.curs.x > 0
 	tn_x = $.curs.x - 1;
 	$if $.wrapnext
 	    tn_x++
 	$if p_line->chars[tn_x].chr == UCSWIDE
-	    assert(tn_x > 0);
+	    $call assert, tn_x>0
 	    tn_x--;
-	add_cc(p_line, tn_x, c);
+	#add_cc(p_line, tn_x, c);
+	# or add attribute flag
 	$call seen_disp_event
 
 subcode: term_char_out_single
@@ -342,13 +347,13 @@ subcode: term_do_SGR
     $for i = 0:$.n_esc_args
 	n=$.pn_esc_args[i]
 	$if n>=30 && n<38
-	    $call set_attr_fg, $.curr_attr, n-30
+	    $call set_attr_fg, $.attr, n-30
 	$elif n==39
-	    $call set_attr_fg, $.curr_attr, COLOR_DEFFG
+	    $call set_attr_fg, $.attr, COLOR_DEFFG
 	$elif n>=40 && n<48
-	    $call set_attr_bg, $.curr_attr, n-40
+	    $call set_attr_bg, $.attr, n-40
 	$elif n==49
-	    $call set_attr_bg, $.curr_attr, COLOR_DEFBG
+	    $call set_attr_bg, $.attr, COLOR_DEFBG
 	$elif n==38 || n==48
 	    $if $.n_esc_args>2
 		$call set_color_256
@@ -362,30 +367,30 @@ subcode: term_do_SGR
 	$call switch_m_disable, 24, UNDER
 	$call switch_m_disable, 25, BLINK
 	$call switch_m_disable, 27, REVERSE
-    $call @on_term_curr_attr
+    $call @on_term_attr
 # ----
 subcode: switch_m_reset(n)
     $elif n==$(n)
-	$.curr_attr = $.default_attr
+	$.attr = $.default_attr
 subcode: switch_m_enable(n, attr)
     $elif n==$(n)
-	$.curr_attr |= ATTR_$(attr)
+	$.attr |= ATTR_$(attr)
 subcode: switch_m_disable(n, attr)
     $elif n==$(n)
-	$.curr_attr &= ~ATTR_$(attr)
+	$.attr &= ~ATTR_$(attr)
 # ----
 subcode: set_color_256
     $if $.pn_esc_args[i+1]==5
 	$if n==38
-	    $call set_attr_fg, $.curr_attr, $.pn_esc_args[i+2] & 0xFF
+	    $call set_attr_fg, $.attr, $.pn_esc_args[i+2] & 0xFF
 	$else
-	    $call set_attr_bg, $.curr_attr, $.pn_esc_args[i+2] & 0xFF
+	    $call set_attr_bg, $.attr, $.pn_esc_args[i+2] & 0xFF
     $elif $.pn_esc_args[i+1]==2 && $.n_esc_args>5
 	$call match_color_216, $.pn_esc_args[i+2]&0xff, $.pn_esc_args[i+3]&0xff, $.pn_esc_args[i+4]&0xff, tn_color_idx
 	$if n==38
-	    $call set_attr_fg, $.curr_attr, tn_color_idx
+	    $call set_attr_fg, $.attr, tn_color_idx
 	$else
-	    $call set_attr_bg, $.curr_attr, tn_color_idx
+	    $call set_attr_bg, $.attr, tn_color_idx
 
 subcode: match_color_216(r, g, b, n)
     $call match_color_6, $(r), tn_r

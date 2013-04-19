@@ -111,10 +111,6 @@ subcode: win_loop_pending_netevent
     net_pending_errors()
 
 # -- term ------------------------------------
-subcode: term_focus(bool)
-    $global b_has_focus
-    b_has_focus=$(bool)
-
 subcode: term_size(row, col)
     $global n_rows, n_cols
     n_rows=$(row)
@@ -153,17 +149,3 @@ subcode: create_window_size_limit
     $if tn_h>rct_temp.bottom-rct_temp.top
 	tn_h=rct_temp.bottom-rct_temp.top
 
-# ===========================================================
-subcode:: function_list
-    $list show_mouseptr
-    $call optional_global
-
-fncode: show_mouseptr(b_show)
-    $local static b_cursor_visible=1
-    $if !cfg.hide_mouseptr
-	b_show = 1;
-    $if b_cursor_visible && !b_show
-	ShowCursor(FALSE);
-    $elif !b_cursor_visible && b_show
-	ShowCursor(TRUE);
-    b_cursor_visible = b_show;

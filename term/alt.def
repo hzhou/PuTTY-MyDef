@@ -2,7 +2,7 @@ subcode:: on_term_init
     $map term_decl, struct clist * alt_screen, int alt_sblines, int alt_which
     $map term_decl, pos alt_curs, pos alt_save_curs
     $map decl_alt, wrap, wrapnext, insert, cset, utf, sco_acs
-    $map decl_alt_save, curr_attr, cset, csattr, utf, wrapnext, sco_acs
+    $map decl_alt_save, attr, cset, csattr, utf, wrapnext, sco_acs
     $.alt_screen = NULL
     $.alt_sblines = 0;
 
@@ -16,7 +16,7 @@ subcode:: on_term_power_on
     $map copy_alt, curs, save_curs
     $.alt_curs.y=0
     $map copy_alt, wrap, wrapnext, insert, cset, utf, sco_acs
-    $map copy_alt_save, curr_attr, cset, csattr, utf, wrapnext, sco_acs
+    $map copy_alt_save, attr, cset, csattr, utf, wrapnext, sco_acs
 
     $if $.alt_screen
 	$call clear_alt_screen
@@ -69,6 +69,9 @@ subcode: term_size_set_alt_variables
     $.alt_wrapnext =$.wrapnext
 
 # ============================================================
+subcode:: function_list
+    $list swap_screen
+
 subcode: swap(a, b, t)
     $(t)=$(a)
     $(a)=$(b)
@@ -76,9 +79,9 @@ subcode: swap(a, b, t)
 
 subcode: swap_screen_var(tempvar, name)
     $if $(condition)
-	$call swap, $.$(name), $.alt_$(name), $(tempvar)
+	$call swap, $(this)$(name), $.alt_$(name), $(tempvar)
     $else
-	$.alt_$(name)=$.$(name)
+	$.alt_$(name)=$(this)$(name)
 
 fncode: swap_screen(Terminal *term, int which, int reset, int keep_cur_pos)
     $if which != 0
@@ -94,8 +97,8 @@ fncode: swap_screen(Terminal *term, int which, int reset, int keep_cur_pos)
 
 	$local pos pos_temp
 	$(set:condition=!reset && !keep_cur_pos)
-	$map swap_screen_var(pos_temp), curs, savecurs
-	$map swap_screen_var(tn_temp), save_attr, save_cset, save_csattr, save_utf, save_wnext, save_sco_acs
+	$map swap_screen_var(pos_temp), curs, save_curs
+	$map swap_screen_var(tn_temp), save_attr, save_cset, save_csattr, save_utf, save_wrapnext, save_sco_acs
 	$(set:condition=!reset)
 	$map swap_screen_var(tn_temp), wrap, wrapnext, insert, cset, utf, sco_acs
 

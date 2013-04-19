@@ -1,7 +1,7 @@
 subcode:: global
     $struct(pos) int x, int y
-    $struct(termchar) unsigned long chr, unsigned long attr, int cc_next
-    $struct(termline) unsigned short lattr, int cols, int size, int cc_free, struct termchar *chars
+    $struct(termchar) unsigned long chr, unsigned long attr
+    $struct(termline) unsigned short lattr, int cols, int size, struct termchar *chars
     $typedef struct pos pos
     $typedef struct termchar termchar
     $typedef struct termline termline

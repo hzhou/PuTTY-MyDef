@@ -5,43 +5,44 @@ subcode:: function_list
 
 subcode: main_on_WM_TIMER    
     $if (UINT_PTR)wparam == TIMING_TIMER_ID
-	KillTimer(hwnd, TIMING_TIMER_ID);
+	KillTimer(hwnd_main, TIMING_TIMER_ID);
 	$call run_timers
 	$if timer_list.head
 	    timer_change_notify(timer_list.head->time_val)
     return 0
 
 fncode: timer_change_notify(time_next)
-    tn_ticks = (int)(time_next - GETTICKCOUNT())
+    tn_ticks = (int)(time_next - GetTickCount())
     $if tn_ticks<=0
 	tn_ticks=1
-    KillTimer(hwnd, TIMING_TIMER_ID);
-    SetTimer(hwnd, TIMING_TIMER_ID, tn_ticks, NULL);
+    KillTimer(hwnd_main, TIMING_TIMER_ID);
+    SetTimer(hwnd_main, TIMING_TIMER_ID, tn_ticks, NULL);
     
 # ----
 subcode:: global
     $register_prefix(time) long
-    $call slist_declare timer | time_now | timer_fn_t fn, void * ctx, time_val, s_name
+    $fntype void (*timer_fn)(void * ctx, long time_now)
+    $call slist_declare timer | time_now | timer_fn, void * ctx, time_val, s_name
     $global struct timer_list timer_list
 
     $list schedule_timer, expire_timer_context
     $list timer_change_notify
 
 subcode:: main_init
-    $call slist_init, timer_list, time_now=GETTICKCOUNT()
+    $call slist_init, timer_list, time_now=GetTickCount()
 
 subcode: debug_timer_list
     printf("  Debug: head: %p, tail %p, count: %d\n", timer_list.head, timer_list.tail, timer_list.n)
     &call slist_each, timer_list
-	printf("  Debug: %p - %d\n", $(p)->fn, time_now-$(p)->time_val)
+	printf("  Debug: %p - %d\n", $(p)->timer_fn, time_now-$(p)->time_val)
 
 # ----------------------------------------
-fncode: schedule_timer(tn_ticks, timer_fn_t fn, void *ctx)
-    $(set:member=time_val=time_when, fn=fn, ctx=ctx)
-    time_now=GETTICKCOUNT()
+fncode: schedule_timer(tn_ticks, timer_fn, void *ctx)
+    $(set:member=time_val=time_when, timer_fn=timer_fn, ctx=ctx)
+    time_now=GetTickCount()
     time_when = tn_ticks + time_now
     $if tn_ticks<=0
-	fn(ctx, time_when)
+	timer_fn(ctx, time_when)
     $elif !timer_list.head || timer_list.head->time_val>time_when
 	$call slist_unshift, timer_list, $(member)
 	timer_change_notify(time_when);
@@ -56,10 +57,10 @@ fncode: schedule_timer(tn_ticks, timer_fn_t fn, void *ctx)
     return time_when;
 
 subcode: run_timers
-    time_now=GETTICKCOUNT()
+    time_now=GetTickCount()
     &call slist_head_pop, timer_list
 	$if $(p)->time_val<=time_now
-	    $(p)->fn($(p)->ctx, $(p)->time_val)
+	    $(p)->timer_fn($(p)->ctx, $(p)->time_val)
 	$else
 	    break
     # $call debug_timer_list

@@ -13,7 +13,7 @@ include: win32/font.def
 #include: win32/other.def
 #include: win32/frontend.def
 #include: win32/menu.def
-#include: win32/time.def
+include: win32/time.def
 #include: win32/debug.def
 #include: win32/keyboard.def
 #include: hack.def
@@ -55,6 +55,19 @@ subcode: win_get_config(name, var, default)
     $global $(var)
     $call get_config, $(name), $(var), $(default)
 
+# ---- line discipline -------------------------------------
+subcode:: global
+    $list linedisc_send
+
+fncode: linedisc_send(s_buf, n_len)
+    $if !back
+	return
+    $if n_len>0
+	$call @line_discipline_edit
+	$call @line_discipline_echo
+	back->send(back, s_buf, n_len)
+
+
 # ---- Front End -------------------------------------------
 subcode:: global
     $list from_backend, from_terminal
@@ -63,11 +76,19 @@ fncode: from_backend(ts_buf, tn_len)
     $return_type int
     return term_data(term, ts_buf, tn_len)
 
-fncode: from_terminal(ts_msg, void * data)
-    $if strncmp(ts_msg, "text", 4)==0
+fncode: from_terminal(ts_msg, char * data)
+    $if strncmp(ts_msg, "text", 5)==0
 	$local tn_x, tn_y, tn_attr, tn_count, wchar_t * tp_text
-	$unpack, data, "4444s", tn_x, tn_y, tn_attr, tn_count, tp_text
-	do_text(tn_x, tn_y, tp_text, tn_count, tn_attr, 0)
-	$if tn_attr & (TATTR_ACTCURS | TATTR_PASCURS)
-	    do_cursor(tn_x, tn_y, tp_text, tn_count, tn_attr, 0)
-
+	$unpack data, "4444s", tn_x, tn_y, tn_attr, tn_count, tp_text
+	do_text(tn_x, tn_y, tp_text, tn_count, tn_attr)
+    $elif strncmp(ts_msg, "scrollbar", 10)==0
+	$local tn_total, tn_pos, tn_page
+	$unpack data, "444", tn_total, tn_pos, tn_page
+	$local SCROLLINFO si
+	si.cbSize = sizeof(si);
+	si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+	si.nMin = 0;
+	si.nMax = tn_total - 1
+	si.nPage = tn_page
+	si.nPos = tn_pos
+	SetScrollInfo(hwnd_main, SB_VERT, &si, TRUE);
