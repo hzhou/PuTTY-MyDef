@@ -1,0 +1,54 @@
+macros:
+    term_alt_list:: wrap, insert
+
+subcode:: on_term_init
+    $map term_decl, int wrap, int insert
+    $.wrap=1
+
+subcode:: on_term_power_on
+    $call get_config, "wrap_mode", $.wrap, 1
+    $.insert = 0
+
+# Wrap Mode
+subcode: term_out_check_wrap_mode
+    $if !$.wrap
+	# wrap disabled, keep print at the end of line
+	$if $.wrapnext
+	    $.wrapnext=0
+	$elif tn_width==2 && $.curs.x==$.cols-1
+	    $.curs.x--
+
+# Insert Mode
+subcode: term_out_check_insert_mode
+    $if $.insert && tn_width > 0
+	insch(term, tn_width)
+
+subcode:: function_list
+    $list insch
+
+fncode: insch(Terminal *term, int x)
+    # insertion or deletion
+    tb_dir = (x < 0 ? -1 : +1);
+    x = (x < 0 ? -x : x);
+    $if x > $.cols - $.curs.x
+	x = $.cols - $.curs.x
+    tn_remain = $.cols-($.curs.x+x)
+    $local pos_t
+    pos_t.y = $.curs.y;
+    pos_t.x = $.curs.x + x;
+    $call @check_deselect, $.curs, pot_t
+    check_boundary(term, $.curs.x, $.curs.y);
+    $call get_screen_line, $.curs.y, p_line
+    $if tb_dir < 0
+	check_boundary(term, $.curs.x + x, $.curs.y);
+	$for j=0:tn_remain
+	    move_termchar(p_line, p_line->chars+$.curs.x+j, p_line->chars+$.curs.x+j+x)
+	$for j=0:x
+	    $call erase_termchar, $.curs.x+tn_remain+j
+    $else
+	$for j=tn_remain; j-- ;
+	$for j=0:tn_remain
+	    move_termchar(p_line, p_line->chars+$.cols-1-j, p_line->chars+$.cols-1-x-j)
+	$for j=0:x
+	    $call erase_termchar, $.curs.x + x+j
+

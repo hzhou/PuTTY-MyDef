@@ -1,0 +1,49 @@
+include: backend.def
+
+page: shell
+    autoload: h
+    subcode: main
+	$struct(backend_shell) int pid, HANDLE input, HANDLE output
+	$call api_create, shell, backend
+
+subcode: shell_init
+    $call create_pipes
+
+    $local STARTUPINFO si, PROCESS_INFORMATION pi
+
+    ZeroMemory(&si, sizeof(si))
+    si.cb=sizeof(si)
+    si.dwFlags=STARTF_USETDHANDLES
+    si.hStdInput = h_in_out
+    si.hStdOutput= h_out_in
+    si.hStdError = h_out_in
+
+    tn_ret=CreateProcess(NULL, "CMD.EXE", NULL, NULL, TRUE, DETACHED_PROCESS, NULL, "C:\\Data", &si, &pi)
+    $if tn_ret
+	this->pid=pi.dwProcessId
+	CloseHandle(pi.hProcess)
+	CloseHandle(pi.hThread)
+	return NULL
+    $else
+	return "Failed to spawn shell."
+
+subcode: create_pipes
+    $local SECURITY_ATTRIBUTES sa
+    sa.nLength=sizeof(sa)
+    sa.bInheritHandle=TRUE
+    sa.lpSecurityDescriptor=NULL
+
+    $local HANDLE h_in_in, HANDLE h_in_out
+    tn_ret=CreatePipe(&h_in_in, &h_in_out, &sa, 0)
+    $call assert, tn_ret==0
+    tn_ret=SetHandleInformation(h_in_in, HANDLE_FLAG_INHERIT, 0)
+    $call assert, tn_ret==0
+
+    $local HANDLE h_out_in, HANDLE h_out_out
+    tn_ret=CreatePipe(&h_out_in, &h_out_out, &sa, 0)
+    $call assert, tn_ret==0
+    tn_ret=SetHandleInformation(h_out_out, HANDLE_FLAG_INHERIT, 0)
+    $call assert, tn_ret==0
+
+    this->input=h_in_in
+    this->output=h_out_out
