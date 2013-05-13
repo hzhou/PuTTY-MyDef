@@ -1,92 +1,3 @@
-# ---- Char Out ----------------------------------------
-subcode:: on_term_init
-    $map term_decl, int wrap, int insert
-    $.wrap=1
-
-subcode:: on_term_power_on
-    $call get_config, "wrap_mode", $.wrap, 1
-    $.insert = 0
-
-subcode: term_do_CHAR
-    $call get_screen_line, $.curs.y, p_line
-    # -- get width ----
-    tn_width = 0
-    $if DIRECT_CHAR(c)
-	tn_width = 1
-    $else
-	$declare int mk_wcwidth(int)
-	tn_width = mk_wcwidth((wchar_t) c)
-
-    # -- next line ----
-    $if $.wrapnext && $.wrap && tn_width > 0 
-	$call term_out_wrap
-
-    # -- next char ----
-    $if $.insert && tn_width > 0
-	insch(term, tn_width)
-
-    $call @check_deselect_curs
-    $call @term_out_log_ascii
-
-    $if tn_width==0  
-	$call term_char_out_cc
-	continue;
-    $else
-	$if tn_width==2
-	    $call term_char_out_wide
-	$elif tn_width==1  
-	    $call term_char_out_single
-	$call term_char_out_inc_curs
-	$call seen_disp_event
-
-# Combining characters
-# There appears to be limited cases for this
-# Rather than adding 50% more complexity, maybe we could simply 
-#   utilize a few bits in attributes?
-subcode: term_char_out_cc
-    $if $.curs.x > 0
-	tn_x = $.curs.x - 1;
-	$if $.wrapnext
-	    tn_x++
-	$if p_line->chars[tn_x].chr == UCSWIDE
-	    $call assert, tn_x>0
-	    tn_x--;
-	#add_cc(p_line, tn_x, c);
-	# or add attribute flag
-	$call seen_disp_event
-
-subcode: term_char_out_single
-    check_boundary(term, $.curs.x, $.curs.y);
-    check_boundary(term, $.curs.x+1, $.curs.y);
-    $call set_termchar, p_line, $.curs.x, c
-
-subcode: term_char_out_wide
-    check_boundary(term, $.curs.x, $.curs.y);
-    check_boundary(term, $.curs.x+2, $.curs.y);
-    $if $.curs.x == $.cols-1
-	$call erase_termchar, $.curs.x
-	$call term_out_wrap
-	p_line->lattr |= LATTR_WRAPPED2;
-	check_boundary(term, $.curs.x, $.curs.y);
-	check_boundary(term, $.curs.x+2, $.curs.y);
-    $call set_termchar, p_line, $.curs.x, c
-    $.curs.x++;
-    $call set_termchar, p_line, $.curs.x, UCSWIDE
-
-# ----
-subcode: term_char_out_inc_curs
-    $.curs.x++;
-    $if $.curs.x == $.cols
-	$.curs.x--;
-	$.wrapnext = TRUE;
-
-subcode: term_out_wrap
-    p_line->lattr |= LATTR_WRAPPED
-    $call term_do_LF_only
-    $call term_do_CR_only
-    $.wrapnext = 0
-    $call get_screen_line, $.curs.y, p_line
-
 # -------------- term actions ------------------------------------------
 subcode:: on_term_init
     $map term_decl, char id_string[1024]
@@ -115,7 +26,7 @@ subcode: term_do_S1
 subcode: term_do_S0
     $.cset=0
 
-subcode:: term_init
+subcode:: on_term_init
     $call term_get_config, "no_dbackspace", b_no_dbackspace, 1
 
 subcode: term_do_DEL
@@ -130,7 +41,7 @@ subcode: term_do_DEL
 
 subcode: term_do_BS
     $call seen_disp_event
-    $if $.curs.x == 0 && ($.curs.y == 0 || $.wrap == 0)
+    $if $.curs.x == 0 && $.curs.y == 0
 	# /* do nothing */
     $elif $.curs.x == 0 && $.curs.y > 0
 	$.curs.x = $.cols - 1
@@ -154,23 +65,13 @@ subcode: term_do_HT
 	    $.curs.x = $.cols - 1;
     $call @check_deselect(old_curs, $.curs)
 
-subcode: term_do_LF_only
-    $if $.curs.y == $.rows - 1
-	$call scroll_down_one
-    $elif $.curs.y < $.rows - 1
-	$.curs.y++
-    $.wrapnext = FALSE;
-
-subcode: term_do_CR_only
-    $.curs.x = 0;
-    $.wrapnext = FALSE;
-
-subcode:: term_init
-    $call term_get_config, "crhaslf", b_crhaslf, 0
+subcode:: on_term_init
+    $call term_get_config, "crhaslf", b_crhaslf, 1
     $call term_get_config, "lfhascr", b_lfhascr, 0
 
 subcode: term_do_CR
     $call seen_disp_event
+    $call debug, "term_do_CR b_crhaslf=%d\n", $.b_crhaslf
     $if $.b_crhaslf
 	$call term_do_LF_only
     $call term_do_CR_only

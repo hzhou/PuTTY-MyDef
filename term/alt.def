@@ -1,8 +1,11 @@
+macros: 
+    term_alt_list:: wrapnext, cset, utf, sco_acs
+
 subcode:: on_term_init
     $map term_decl, struct clist * alt_screen, int alt_sblines, int alt_which
     $map term_decl, pos alt_curs, pos alt_save_curs
-    $map decl_alt, wrap, wrapnext, insert, cset, utf, sco_acs
-    $map decl_alt_save, attr, cset, csattr, utf, wrapnext, sco_acs
+    $map decl_alt, curs, $(term_alt_list)
+    $map decl_alt_save, curs, csattr, $(term_save_list)
     $.alt_screen = NULL
     $.alt_sblines = 0;
 
@@ -13,10 +16,9 @@ subcode:: on_term_finish
 # ---- power_on 
 subcode:: on_term_power_on
     $.alt_which = 0;
-    $map copy_alt, curs, save_curs
     $.alt_curs.y=0
-    $map copy_alt, wrap, wrapnext, insert, cset, utf, sco_acs
-    $map copy_alt_save, attr, cset, csattr, utf, wrapnext, sco_acs
+    $map copy_alt, curs, $(term_alt_list)
+    $map copy_alt_save, curs, csattr, $(term_save_list)
 
     $if $.alt_screen
 	$call clear_alt_screen
@@ -34,10 +36,16 @@ subcode: copy_alt_save(name)
     $(this)alt_save_$(name)=$(this)save_$(name)
 
 subcode: decl_alt(name)
-    $call term_decl, int alt_$(name)
+    $(if:name=curs)
+	$call term_decl, pos alt_$(name)
+    $(else)
+	$call term_decl, int alt_$(name)
 
 subcode: decl_alt_save(name)
-    $call term_decl, int alt_save_$(name)
+    $(if:name=curs)
+	$call term_decl, pos alt_save_$(name)
+    $(else)
+	$call term_decl, int alt_save_$(name)
 
 # ---- term_size --------------------------------
 subcode:: on_term_size_before
@@ -83,6 +91,12 @@ subcode: swap_screen_var(tempvar, name)
     $else
 	$.alt_$(name)=$(this)$(name)
 
+subcode: swap_screen_var_save(tempvar, name)
+    $if $(condition)
+	$call swap, $(this)save_$(name), $.alt_save_$(name), $(tempvar)
+    $else
+	$.alt_save_$(name)=$(this)save_$(name)
+
 fncode: swap_screen(Terminal *term, int which, int reset, int keep_cur_pos)
     $if which != 0
 	reset = FALSE
@@ -98,7 +112,7 @@ fncode: swap_screen(Terminal *term, int which, int reset, int keep_cur_pos)
 	$local pos pos_temp
 	$(set:condition=!reset && !keep_cur_pos)
 	$map swap_screen_var(pos_temp), curs, save_curs
-	$map swap_screen_var(tn_temp), save_attr, save_cset, save_csattr, save_utf, save_wrapnext, save_sco_acs
+	$map swap_screen_var_save(tn_temp), attr, $(term_save_list)
 	$(set:condition=!reset)
-	$map swap_screen_var(tn_temp), wrap, wrapnext, insert, cset, utf, sco_acs
+	$map swap_screen_var(tn_temp), $(term_alt_list)
 

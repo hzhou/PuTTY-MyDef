@@ -15,6 +15,17 @@ subcode:: on_term_power_on
 subcode:: on_term_finish
     $call to_print_finish
 
+# ------------------------------------------------
+subcode:: term_out_pre
+    $if $.n_termstate==termstate_SEEN_CSI && c=='i'
+	$if $.n_state_2
+	    $call term_do_MC
+	    continue
+    $if $.n_termstate==termstate_PRINTING
+	$call term_out_printing
+	continue
+
+# ------------------------------------------------
 subcode: term_do_MC
     $if $.n_esc_args==1
 	$if $.pn_esc_args[0]==5 && cfg.printer

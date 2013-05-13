@@ -149,3 +149,13 @@ subcode: create_window_size_limit
     $if tn_h>rct_temp.bottom-rct_temp.top
 	tn_h=rct_temp.bottom-rct_temp.top
 
+# term
+fncode: term_data_untrusted(Terminal *term, ts_data, tn_len)
+    $for i=0:tn_len
+	$if ts_data[i] == '\n'
+	    term_data(term, "\r\n", 2)
+	$elif ts_data[i] & 0x60
+	    # non-control char
+	    term_data(term, ts_data + i, 1);
+    return 0
+

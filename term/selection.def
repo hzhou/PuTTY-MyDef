@@ -204,7 +204,7 @@ subcode: term_mouse_fit_pos
 
     $call @bidi_adjust_x, selpoint.x, y
 
-subcode:: term_init
+subcode:: on_term_init
     $call term_get_config, "no_mouse_rep", b_no_mouse_rep, 0
     $call term_get_config, "mouse_override", b_mouse_override, 0
     $call term_get_config, "rect_select", b_rect_select, 0

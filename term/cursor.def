@@ -1,8 +1,11 @@
+macros:
+    term_save_list: attr, wrapnext, cset, utf, sco_acs
+
 subcode:: on_term_init
     $map term_decl, pos curs, int cset_attr[2] 
     $map decl_int, default_attr
-    $map decl_int, attr, wrapnext, cset, utf, sco_acs
-    $map decl_save, attr, wrapnext, cset, utf, sco_acs
+    $map decl_int, $(term_save_list)
+    $map decl_save, $(term_save_list)
     $map term_decl, pos save_curs, int save_csattr
 
 subcode:: function_list
@@ -36,11 +39,11 @@ subcode:: on_term_size_after
     $map fit_pos_range, $.save_curs, $.curs
 
 subcode: save_cursor
-    $map cur_save, curs, attr, wrapnext, cset, utf, sco_acs
+    $map cur_save, curs, $(term_save_list)
     $.save_csattr = $.cset_attr[$.cset];
 
 subcode: restore_cursor
-    $map cur_restore, curs, attr, wrapnext, cset, utf, sco_acs
+    $map cur_restore, curs, $(term_save_list)
     $.cset_attr[$.cset] = $.save_csattr;
     $call fit_pos_range, $.curs
     $if $.wrapnext && $.curs.x < $.cols-1

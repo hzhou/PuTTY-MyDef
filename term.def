@@ -1,9 +1,12 @@
 include: cfg.def
 
+include: macro/misc.def
 include: macro/charset.def
 include: macro/attr.def
-
 include: macro/clist.def
+include: macro/bufchain.def
+
+include: win32/debug.def
 
 include: term/main.def
 include: term/misc.def
@@ -20,6 +23,7 @@ page: term
     autoload: h
     subcode: main
 	$define(snprintf) sprintf_s
+	$global extern HWND hwnd_main
 	$(set:this=term->)
 	$register_prefix(pos) pos
 	$register_name(p_line) termline *
@@ -43,26 +47,57 @@ subcode: term_get_config(name, var, default)
     $call term_decl,  $(var)
     $call get_config, $(name), $(this)$(var), $(default)
 
-subcode: fit_range(var, a, b)
-    $if $(var)<$(a)
-	$(var)=$(a)
-    $elif $(var)>=$(b)
-	$(var)=$(b)-1
-
-# --------------------------
-subcode:: on_term_init
-    $map term_decl, int selstate
-    $enumbase() NO_SELECTION, ABOUT_TO, DRAGGING, SELECTED
-    $.selstate=NO_SELECTION
-
+# -- init & finish ------------------------
 subcode:: function_list
-    $list term_copyall, term_deselect, term_nopaste
+    $list term_init, term_free
 
-fncode: term_copyall(Terminal * term)
-    return
+fncode: term_init
+    $return_type Terminal *
+    $local Terminal * term
+    term = &g_term
+    $map term_decl, int cols, int rows, struct clist * screen
+    $.rows=-1
+    $.cols=-1
+    $.screen = NULL
+    $call @on_term_init
+    power_on(term, TRUE);
+    return term
 
-fncode: term_deselect(Terminal * term)
-    return
+fncode: term_free(Terminal *term)
+    $call @on_term_finish
+    expire_timer_context(term);
 
-fncode: term_nopaste(Terminal * term)
-    return
+# -- term_data -----------
+subcode:: function_list
+    $list term_data
+
+subcode:: on_term_init
+    $map term_decl, b_in_term_out, struct bufchain_list inbuf
+    $.b_in_term_out=0
+    $call bufchain_init, $.inbuf
+
+subcode:: on_term_finish
+    $call bufchain_clear, $.inbuf
+
+fncode: term_data(Terminal *term, ts_data, tn_len)
+    $call debug_term_data
+    $call bufchain_add, $.inbuf, ts_data, tn_len
+    $call @do_term_data, ts_data, tn_len
+    return 0
+
+subcode: debug_term_data
+    $local ts_temp[100]
+    $if tn_len<100
+	strcpy(ts_temp, ts_data)
+	ts_temp[tn_len]='\0'
+	$call debug, "termdata [%d] %s\n", tn_len, ts_temp
+# -------------
+subcode:: function_list
+    $list term_notify
+
+fncode: term_notify(Terminal *term, ts_event)
+    $if strcmp(ts_event, "key")==0
+	$call on_term_key_event
+    $elif strcmp(ts_event, "paint")==0
+	term_invalidate(term)
+

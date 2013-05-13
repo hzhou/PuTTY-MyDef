@@ -2,6 +2,7 @@ include: cfg.def
 include: macro/attr.def
 
 include: win32/main.def
+include: win32/debug.def
 #include: win32/sock.def
 #include: win32/commandline.def
 #include: win32/wndproc.def
@@ -14,12 +15,13 @@ include: win32/font.def
 #include: win32/frontend.def
 #include: win32/menu.def
 include: win32/time.def
-#include: win32/debug.def
 #include: win32/keyboard.def
 #include: hack.def
 #include: mouse.def
 #include: palette.def
 #include: win32/color.def
+
+include: win32/linedisc_unicode.def
 
 #include: front/line_discipline.def
 #include: front/get_userpass.def
@@ -32,10 +34,11 @@ page: main
 	$(set:appname=PuTTY-MyDef)
 	$define(snprintf) sprintf_s
 	$declare TERM term_init()
-	$declare void term_invalidate(TERM)
-	$declare void term_scroll(TERM, int, int)
-	$declare int term_data_untrusted(TERM, const char *, int)
+	$declare TERM term_free(TERM)
 	$declare int term_data(TERM, char *, int)
+	$declare void term_notify(TERM, char *)
+
+	$declare void term_scroll(TERM, int, int)
 	$call attr_defines
 	$call charset_defines
 	#$include storage.h
@@ -67,7 +70,6 @@ fncode: linedisc_send(s_buf, n_len)
 	$call @line_discipline_echo
 	back->send(back, s_buf, n_len)
 
-
 # ---- Front End -------------------------------------------
 subcode:: global
     $list from_backend, from_terminal
@@ -76,19 +78,19 @@ fncode: from_backend(ts_buf, tn_len)
     $return_type int
     return term_data(term, ts_buf, tn_len)
 
+subcode:: WinMain_PreLoop
+    $global n_msg_loop_started=0
+    n_msg_loop_started=1
+
 fncode: from_terminal(ts_msg, char * data)
+    $if !n_msg_loop_started
+	return
     $if strncmp(ts_msg, "text", 5)==0
 	$local tn_x, tn_y, tn_attr, tn_count, wchar_t * tp_text
 	$unpack data, "4444s", tn_x, tn_y, tn_attr, tn_count, tp_text
+	$call debug, "text (%d, %d) %d [%c %c %c ...]\n", tn_x, tn_y, tn_count, tp_text[0], tp_text[1], tp_text[2]
 	do_text(tn_x, tn_y, tp_text, tn_count, tn_attr)
     $elif strncmp(ts_msg, "scrollbar", 10)==0
 	$local tn_total, tn_pos, tn_page
 	$unpack data, "444", tn_total, tn_pos, tn_page
-	$local SCROLLINFO si
-	si.cbSize = sizeof(si);
-	si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
-	si.nMin = 0;
-	si.nMax = tn_total - 1
-	si.nPage = tn_page
-	si.nPos = tn_pos
-	SetScrollInfo(hwnd_main, SB_VERT, &si, TRUE);
+	$call @set_scrollbar, tn_total, tn_pos, tn_page

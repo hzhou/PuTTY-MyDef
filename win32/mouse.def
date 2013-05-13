@@ -5,6 +5,9 @@ subcode:: WinMain_PreShow
 subcode:: function_list
     $list show_mouseptr
 
+subcode:: win_init
+    $call win_get_config, "hide_mouseptr", b_hide_mouseptr, 1
+
 fncode: show_mouseptr(b_show)
     $local static b_cursor_visible=1
     $if !b_hide_mouseptr

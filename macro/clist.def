@@ -20,22 +20,26 @@ subcode: clist_free(p, i)
 	free($(p)->p_list)
     free($(p))
 
+# ----------------------------
 subcode: clist_expand(p, n)
     $if $(n)>$(p)->n_size
 	$local void ** p_temp 
 	$allocate($(n)) p_temp
 	$if $(p)->p_list
-	    tn_idx=0
-	    $for i=$(p)->n_start:$(p)->n_size
-		p_temp[tn_idx++]=$(p)->p_list[i]
-	    $for i=0:$(p)->n_start
-		p_temp[tn_idx++]=$(p)->p_list[i]
-	    $local void ** p_temp2
-	    p_temp2=$(p)->p_list
-	    $(p)->p_list=p_temp
-	    $(p)->n_start=0
-	    free(p_temp2)
+	    $call copy_clist
+	    free($(p)->p_list)
+	$(p)->p_list=p_temp
+	$(p)->n_start=0
+	$(p)->n_size=$(n)
 
+subcode: copy_clist
+    tn_idx=0
+    $for i=$(p)->n_start:$(p)->n_size
+	p_temp[tn_idx++]=$(p)->p_list[i]
+    $for i=0:$(p)->n_start
+	p_temp[tn_idx++]=$(p)->p_list[i]
+
+# ----------------------------
 subcode: clist_push(p, i)
     $call assert, $(p)->n_count<$(p)->n_size
     tn_pos=$(p)->n_start+$(p)->n_count

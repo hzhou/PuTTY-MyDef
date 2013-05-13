@@ -9,7 +9,7 @@ subcode:: _autoload
     $fntype int (*send)(void * handle, char * ts_buf, int tn_len)
     $fntype void (*size)(void * handle, int tn_rows, int tn_cols)
 
-    $call api_create, null, backend
+    #$call api_create, null, backend
     $call api_create, loop, backend
 
 # --------------------------------------------
@@ -21,7 +21,7 @@ subcode: api_declare(name, @list)
     $struct($(name)) void * data, name, $(list)
 
 subcode: api_create(name, parent)
-    $struct($(parent)_$(name)) s_class
+    $struct($(parent)_$(name)) int rows, int cols
 
     $function $(parent)_create_$(name) 
 	$return_type struct $(parent) *
@@ -34,7 +34,8 @@ subcode: api_create(name, parent)
 	    $local struct $(parent)_$(name) * this
 	    $allocate this
 	    $if this
-		this->s_class="$(parent)_$(name)"
+		this->rows=0
+		this->cols=0
 		p->data=this
 	    $else
 		free(p)
@@ -62,6 +63,10 @@ subcode: backend_send
 subcode: backend_free
     free(this)
     free(handle)
+
+subcode: backend_size
+    this->rows=tn_rows
+    this->cols=tn_cols
 
 subcode: loop_send
     return from_backend(ts_buf, tn_len)

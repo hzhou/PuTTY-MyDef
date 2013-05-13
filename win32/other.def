@@ -247,3 +247,8 @@ fncode: sys_cursor_update
 
     ImmReleaseContext(hwnd, hIMC);
 
+subcode: init_transparency
+    $call get_config, "transparency", tn_transparency, 0
+    $if tn_transparency >= 50 && tn_transparency < 255
+	MakeWindowTransparent(hwnd_main, tn_transparency)
+

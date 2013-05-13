@@ -9,23 +9,7 @@ subcode:: global
     $global Terminal g_term
 
 subcode:: function_list
-    $map term_decl, int cols, int rows, struct clist * screen
-    $list term_init, term_free, power_on
-
-fncode: term_init
-    $return_type Terminal *
-    $local Terminal * term
-    term = &g_term
-    $.rows=-1
-    $.cols=-1
-    $.screen = NULL
-    $call @on_term_init
-    power_on(term, TRUE);
-    return term
-
-subcode: term_free(Terminal *term)
-    $call @on_term_finish
-    expire_timer_context(term);
+    $list power_on
 
 fncode: power_on(Terminal *term, tb_clear)
     $call @on_term_power_on
@@ -51,6 +35,7 @@ fncode: term_size(Terminal *term, n_row, n_col)
     $if n_col < 1 
 	n_col = 1
     $call clist_expand, $.screen, n_row
+    $call debug, "clist_expand screen row=%d\n", n_row
 
     $call @on_term_size_before
 
@@ -59,11 +44,13 @@ fncode: term_size(Terminal *term, n_row, n_col)
 
     tn_cursor_adjust=0
     # -- enlarge --
+    $call debug, "term_add_line %d -> %d scrollback count %d\n", $.rows, n_row, $.n_scrollback_count
     $while $.rows < n_row
 	$if $.n_scrollback_count > 0
 	    $call term_size_insert_scrollback
 	$else
 	    $call term_size_add_blank
+    $call debug, "term_add_line %d -> %d scrollback count %d\n", $.rows, n_row, $.n_scrollback_count
     # -- shrink --
     $while $.rows > n_row
 	$if $.curs.y < $.rows - 1

@@ -1,5 +1,3 @@
-include: macro/bufchain.def
-
 include: term/to_action.def
 include: term/to_utf.def
 include: term/to_beep.def
@@ -9,33 +7,11 @@ include: term/to_osc.def
 #include: term/to_log.def
 
 # #### term in ##############################################
-subcode:: function_list
-    $list term_data, term_data_untrusted
-
-subcode:: on_term_init
-    $map term_decl, b_in_term_out, struct bufchain_list inbuf
-    $.b_in_term_out=0
-    $call bufchain_init, $.inbuf
-
-subcode:: on_term_finish
-    $call bufchain_clear, $.inbuf
-
-fncode: term_data(Terminal *term, ts_data, tn_len)
-    $call bufchain_add, $.inbuf, ts_data, tn_len
+subcode: do_term_data(data, len)
     $if !$.b_in_term_out && $.selstate != DRAGGING
 	$.b_in_term_out = TRUE;
 	term_out(term)
 	$.b_in_term_out = FALSE;
-    return 0;
-
-fncode: term_data_untrusted(Terminal *term, ts_data, tn_len)
-    $for i=0:tn_len
-	$if ts_data[i] == '\n'
-	    term_data(term, "\r\n", 2)
-	$elif ts_data[i] & 0x60
-	    # non-control char
-	    term_data(term, ts_data + i, 1);
-    return 0
 
 # #### term out ##############################################
 subcode:: on_term_init
@@ -54,30 +30,126 @@ fncode: term_out(Terminal *term)
     $local int c
     &call bufchain_char_loop, $.inbuf, c
 	# printf("termstate=%d, c=%x [%c]\n", $.n_termstate, c, (char)c);
-	$if $.n_termstate==termstate_PRINTING
-	    # $call term_out_printing
-	    continue;
+	$call @term_out_pre  # Specific feature
+	$call @term_out_pre2 # General feature
 	$if $.n_termstate == termstate_TOPLEVEL
-	    $call term_out_filter
-
-	$call @term_out_check_C1_control
-
-	$if c=='\033'
-	    $.n_termstate = termstate_SEEN_ESC
-	$elif (c&~0x1F)== 0||c=='\177' && $.n_termstate < termstate_DO_CTRLS
-	    $call term_out_C0_Control
-	$elif $.n_termstate == termstate_TOPLEVEL
+	    $call @term_out_filter
 	    $call term_do_CHAR
-	$elif $.n_termstate==termstate_SEEN_ESC
-	    $call term_out_SEEN_ESC
-	$elif $.n_termstate==termstate_SEEN_CSI
-	    $call term_out_SEEN_CSI
-	$elif $.n_termstate==termstate_SEEN_OSC
-	    $call term_out_SEEN_OSC
 	$else
-	    $.n_termstate=termstate_TOPLEVEL
-	$call @check_deselect_curs
+	    $.n_termstate = termstate_TOPLEVEL
+	$call @term_out_after
     $call @term_out_flush
+
+# ----------------------------
+subcode:: term_out_pre
+    $call @term_out_check_C1_control
+    $if (c&~0x1F)== 0||c=='\177' && $.n_termstate < termstate_DO_CTRLS
+	$call term_out_C0_Control
+
+subcode: term_out_pre2
+    $if c=='\033'
+	$.n_termstate = termstate_SEEN_ESC
+    $elif $.n_termstate==termstate_SEEN_ESC
+	$call term_out_SEEN_ESC
+    $elif $.n_termstate==termstate_SEEN_CSI
+	$call term_out_SEEN_CSI
+    $elif $.n_termstate==termstate_SEEN_OSC
+	$call term_out_SEEN_OSC
+
+subcode:: term_out_after
+    $call @check_deselect_curs
+
+# ---- Char Out ----------------------------------------
+subcode: term_do_CHAR
+    $call debug, "term_do_CHAR (%d, %d) %x\n", $.curs.x, $.curs.y, c
+    $call get_screen_line, $.curs.y, p_line
+    $call term_char_get_width, c
+
+    $call @term_out_check_wrap_mode
+    $if $.wrapnext && tn_width > 0 
+	$call term_out_wrap
+    $call @term_out_check_insert_mode
+
+    $if tn_width>0
+	$if tn_width==2
+	    $call term_char_out_wide
+	$elif tn_width==1  
+	    $call term_char_out_single
+	$.curs.x++
+	$call term_out_check_wrapnext
+    $else
+	$call term_char_out_cc
+
+    $call seen_disp_event
+
+subcode: term_char_get_width(c)
+    $if DIRECT_CHAR($(c))
+	tn_width = 1
+    $else
+	$declare int mk_wcwidth(int)
+	tn_width = mk_wcwidth($(c))
+
+subcode: term_char_out_single
+    $call term_char_out_clear_ucswide, $.curs.x
+    $call term_char_out_clear_ucswide, $.curs.x+1
+    $call set_termchar, p_line, $.curs.x, c
+
+subcode: term_char_out_wide
+    $call term_char_out_clear_ucswide, $.curs.x
+    $call term_char_out_clear_ucswide, $.curs.x+2
+    $if $.curs.x == $.cols-1
+	$call erase_termchar, $.curs.x
+	p_line->lattr |= LATTR_WRAPPED2
+	$call term_out_wrap
+	$call term_char_out_clear_ucswide, $.curs.x+2
+    $call set_termchar, p_line, $.curs.x, c
+    $.curs.x++
+    $call set_termchar, p_line, $.curs.x, UCSWIDE
+
+# Combining characters
+# There appears to be limited cases for this
+# Rather than adding 50% more complexity, maybe we could simply 
+#   utilize a few bits in attributes?
+subcode: term_char_out_cc
+    $if $.curs.x > 0
+	tn_x = $.curs.x - 1;
+	$if $.wrapnext
+	    tn_x++
+	$if p_line->chars[tn_x].chr == UCSWIDE
+	    $call assert, tn_x>0
+	    tn_x--;
+	#add_cc(p_line, tn_x, c);
+	# or add attribute flag
+
+# ----
+subcode: term_char_out_clear_ucswide(x)
+    $if $(x)>0 && $(x)<$.cols
+	$if p_line->chars[$(x)].chr == UCSWIDE
+	    p_line->chars[$(x)-1].chr = ' ' | CSET_ASCII;
+	    p_line->chars[$(x)] = p_line->chars[$(x)-1];
+
+subcode: term_out_check_wrapnext
+    $if $.curs.x == $.cols
+	$.curs.x--;
+	$.wrapnext = 1
+
+subcode: term_out_wrap
+    p_line->lattr |= LATTR_WRAPPED
+    $call term_do_LF_only
+    $call term_do_CR_only
+    $.wrapnext = 0
+    $call get_screen_line, $.curs.y, p_line
+
+subcode: term_do_LF_only
+    $if $.curs.y == $.rows - 1
+	$call scroll_down_one
+    $elif $.curs.y < $.rows - 1
+	$.curs.y++
+    $.wrapnext = FALSE;
+
+subcode: term_do_CR_only
+    $.curs.x = 0;
+    $.wrapnext = FALSE;
 
 # ----------------------------
 subcode: switch_c(case, name)
@@ -170,15 +242,3 @@ subcode: term_out_SEEN_QUERY
 	# -- Switch Charset G3 (VT300)
 
 # #######################################################################
-# -------------------------------------------------------------------
-subcode: term_out_filter
-    $if line_codepage==CP_UTF8
-	$call term_out_filter_utf8
-    $elif $.sco_acs && (c!='\033' && c!='\012' && c!='\015' && c!='\b')
-        $if $.sco_acs == 2
-	    c |= 0x80;
-        c |= CSET_SCOACS;
-    $else
-	tn_cset=$.cset_attr[$.cset]
-	$call encode_cset, c, tn_cset
-

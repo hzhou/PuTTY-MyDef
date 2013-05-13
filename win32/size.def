@@ -1,7 +1,4 @@
-subcode:: WinMain_PreWindow
-    $call win_get_config, "rows", n_rows, 25
-    $call win_get_config, "cols", n_cols, 80
-
+subcode: init_win_size
     $global int font_width, int font_height
     $global int extra_width, int extra_height
     font_width = 10;
@@ -18,9 +15,7 @@ subcode:: WinMain_PreWindow
     offset_width = tn_border
     offset_height = tn_border
 
-subcode:: WinMain_PreShow
-    #init_fonts(0,0)
-
+subcode: adjust_win_size
     $local RECT rct_cr
     $local RECT rct_wr
     GetWindowRect(hwnd_main, &rct_wr);
@@ -32,3 +27,10 @@ subcode:: WinMain_PreShow
     n_win_height = extra_height + font_height * n_rows
 
     tn_ret=SetWindowPos(hwnd_main, NULL, 0, 0, n_win_width, n_win_height, SWP_NOMOVE | SWP_NOREDRAW | SWP_NOZORDER);
+
+# --------------------------------------------
+subcode: rect_to_charpos(rct, l, r, t, b)
+    $(l)=($(rct).left-offset_width)/font_width
+    $(r)=($(rct).right-offset_width-1)/font_width
+    $(t)=($(rct).top-offset_height)/font_height
+    $(b)=($(rct).bottom-offset_height-1)/font_height

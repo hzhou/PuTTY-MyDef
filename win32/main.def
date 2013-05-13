@@ -2,21 +2,30 @@ include: win32/size.def
 include: win32/color.def
 
 fncode: WinMain
+    $call debug_on
     $call @WinMain_Init
     $call @win_init
-    $call @WinMain_PreWindow
     $call wc_cursor, IDC_IBEAM
     $call register_wndclass, "$(appname)", WndProc_main
 
+    $call init_win_size
+
     $global hwnd_main
-    $call create_window_style
+    tn_ws= WS_OVERLAPPEDWINDOW 
+    tn_wsex = 0
+    $call @on_window_style
     $call cw_style, tn_ws
     $call cw_style_ex, tn_wsex
     $call cw_size, 10, 10, n_win_width, n_win_height
     $call create_window, hwnd_main, "$(appname)"
 
+    init_fonts(0,0)
+    $call adjust_win_size
+
     $call @WinMain_PreShow
-    $call show_window
+    ShowWindow(hwnd_main, n_cmdshow);
+    $call @init_focus
+    UpdateWindow(hwnd_main);
 
     $call @WinMain_PreLoop
     $call win_loop
@@ -25,20 +34,19 @@ fncode: WinMain
     $call @WinMain_CleanUp
 
 # --------------------------------------------------
-subcode: assert_action
-    $call msgbox, "Assert Error: $(check) @ line %d", __LINE__
-    return 1
-
-# --------------------------------------------------
 subcode:: WinMain_Init
     $call init_config
     #$call init_console
     #$call winsock_init
 
+subcode:: win_init
+    $call win_get_config, "rows", n_rows, 25
+    $call win_get_config, "cols", n_cols, 80
+    $call init_colors
+
 subcode:: WinMain_PreShow
     $call init_terminal
     #$call init_size
-    #$call init_scrollbar
 
     $call start_backend
     $call @line_discipline_init
@@ -46,8 +54,6 @@ subcode:: WinMain_PreShow
     # set state
     #must_close_session = FALSE;
     #session_closed = FALSE;
-
-    #$call init_colors
 
 subcode:: WinMain_PreLoop
 
@@ -73,53 +79,11 @@ subcode: ssh_cleanup
 	crypto_wrapup();
 
 ## -------------------------------------------------
-subcode: pre_WndProc_main
-    #$call dump_msg
-
-subcode: create_window_style
-    $call win_get_config, "scrollbar", tb_scrollbar, 1
-    $call win_get_config, "noresize", tb_noresize, 0
-    $call win_get_config, "alwaysontop", tb_alwaysontop, 0
-    $call win_get_config, "sunken_edge", tb_sunken_edge, 0
-    tn_ws= WS_OVERLAPPEDWINDOW | WS_VSCROLL
-    tn_wsex = 0
-    $if !tb_scrollbar
-	tn_ws &= ~(WS_VSCROLL);
-    $if tb_noresize
-	tn_ws &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
-    $if tb_alwaysontop
-	tn_wsex |= WS_EX_TOPMOST;
-    $if tb_sunken_edge
-	tn_wsex |= WS_EX_CLIENTEDGE;
-
-subcode: init_scrollbar
-    $local SCROLLINFO si
-    si.cbSize = sizeof(si);
-    si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
-    si.nMin = 0;
-    si.nMax = n_rows - 1;
-    si.nPage = n_rows;
-    si.nPos = 0;
-    SetScrollInfo(hwnd_main, SB_VERT, &si, FALSE);
-
-subcode: show_window
-    ShowWindow(hwnd_main, n_cmdshow);
-    SetForegroundWindow(hwnd_main);
-    $global b_has_focus=0
-    $if GetForegroundWindow() == hwnd_main
-	b_has_focus=1
-    UpdateWindow(hwnd_main);
-
-subcode: init_transparency
-    $call get_config, "transparency", tn_transparency, 0
-    $if tn_transparency >= 50 && tn_transparency < 255
-	MakeWindowTransparent(hwnd_main, tn_transparency)
-
 # ---------------------
 subcode: init_terminal
     $global TERM term
     term = term_init()
-    $call @term_size, 80, 25
+    term_size(term, n_rows, n_cols)
 
 subcode: start_backend
     $global struct backend * back
@@ -130,30 +94,19 @@ subcode: start_backend
 	$local ts_msg_buf[1024]
 	snprintf(ts_msg_buf, 1024, "Unable to open connection:\n%s", ts_err)
 	MessageBox(NULL, ts_msg_buf, "$(appname) Error", MB_ICONERROR|MB_OK)
-    back->size(back, n_rows, n_cols)
+    # back->size(back, n_rows, n_cols)
 
 # ===============================================================
 
 subcode: main_on_WM_PAINT
     $local PAINTSTRUCT ps
     $local HDC hdc
-    HideCaret(hwnd);
+    #HideCaret(hwnd);
     hdc = BeginPaint(hwnd, &ps);
-
-    tn_chr_l=(ps.rcPaint.left-offset_width)/font_width
-    tn_chr_r=(ps.rcPaint.right-offset_width-1)/font_width
-    tn_chr_t=(ps.rcPaint.top-offset_height)/font_height
-    tn_chr_b=(ps.rcPaint.bottom-offset_height-1)/font_height
-
-    #term_invalidate_rect(term, tn_chr_l, tn_chr_t, tn_chr_r, tn_chr_b)
-
-    $if ps.fErase || ps.rcPaint.left  < offset_width  || ps.rcPaint.top   < offset_height || ps.rcPaint.right >= offset_width + font_width*n_cols || ps.rcPaint.bottom>= offset_height + font_height*n_rows
-	$call paint_background
-
-    SelectObject(hdc, GetStockObject(SYSTEM_FONT));
-    SelectObject(hdc, GetStockObject(WHITE_PEN));
+    term_notify(term, "paint")
+    $call paint_background
     EndPaint(hwnd, &ps);
-    ShowCaret(hwnd);
+    #ShowCaret(hwnd);
     return 0;
 
 subcode: paint_background
@@ -163,19 +116,68 @@ subcode: paint_background
     ExcludeClipRect(hdc, offset_width, offset_height, offset_width+font_width*n_cols, offset_height+font_height*n_rows);
     Rectangle(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom);
 
+    SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    SelectObject(hdc, GetStockObject(WHITE_PEN));
 
 # ---------------------------------
+subcode: main_on_WM_CHAR
+    term_notify(term, "key")
+    $call debug, "WM_CHAR %x - %x\n", wparam, lparam
+    #linedisc_send_codepage(CP_ACP, (unsigned char *)&wparam, 1)
+    linedisc_send((char*)&wparam, 1)
+
+# ===========================================================
+# -- focus 
+subcode:: global
+    $global b_has_focus=0
+
+subcode: init_focus
+    SetForegroundWindow(hwnd_main);
+    $if GetForegroundWindow() == hwnd_main
+	b_has_focus=1
+
 subcode:: main_on_WM_SETFOCUS
-    $global b_has_focus
     b_has_focus=1
     term_update(term);
 
 subcode:: main_on_WM_KILLFOCUS
-    $global b_has_focus
     b_has_focus=0
     term_update(term);
 
-# ===========================================================
+# -- scrollbar
 subcode:: win_init
-    $call win_get_config, "hide_mouseptr", b_hide_mouseptr, 1
+    $call win_get_config, "scrollbar", tb_scrollbar, 1
 
+subcode:: on_window_style
+    $if tb_scrollbar
+	tn_ws |= WS_VSCROLL
+
+subcode:: WinMain_PreShow
+    $call init_scrollbar
+
+subcode: init_scrollbar
+    $call set_scrollbar, n_rows, 0, n_rows
+
+subcode: set_scrollbar(total, pos, page)
+    $local SCROLLINFO si
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+    si.nMin = 0
+    si.nMax = $(total) - 1
+    si.nPage = $(page)
+    si.nPos = $(pos)
+    SetScrollInfo(hwnd_main, SB_VERT, &si, TRUE);
+
+# -- other
+subcode:: win_init
+    $call win_get_config, "noresize", tb_noresize, 0
+    $call win_get_config, "alwaysontop", tb_alwaysontop, 0
+    $call win_get_config, "sunken_edge", tb_sunken_edge, 0
+
+subcode:: on_window_style
+    $if tb_noresize
+	tn_ws &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+    $if tb_alwaysontop
+	tn_wsex |= WS_EX_TOPMOST;
+    $if tb_sunken_edge
+	tn_wsex |= WS_EX_CLIENTEDGE;

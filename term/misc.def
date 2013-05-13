@@ -71,8 +71,20 @@ subcode: seen_disp_event
     $.b_seen_disp_event=1
     $call term_schedule_update
 
-fncode: term_seen_key_event(Terminal *term)
-    $call @term_on_key_event
-    $.disptop = 0
-    $call seen_disp_event
+# ------------------------------------------
+subcode:: on_term_init
+    $map term_decl, int selstate
+    $enumbase() NO_SELECTION, ABOUT_TO, DRAGGING, SELECTED
+    $.selstate=NO_SELECTION
 
+subcode:: function_list
+    $list term_copyall, term_deselect, term_nopaste
+
+fncode: term_copyall(Terminal * term)
+    return
+
+fncode: term_deselect(Terminal * term)
+    return
+
+fncode: term_nopaste(Terminal * term)
+    return

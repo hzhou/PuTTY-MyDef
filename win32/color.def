@@ -19,10 +19,10 @@ subcode: init_colors
 subcode: fill_color_config
     $call get_config_color, 256, 0xBBBBBB, "color_default"
     $call get_config_color, 257, 0xFFFFFF, "color_default_bold"
-    $call get_config_color, 258, 0xFFFFFF, "color_background"
+    $call get_config_color, 258, 0x000000, "color_background"
     $call get_config_color, 259, 0x555555, "color_background_bold"
     $call get_config_color, 260, 0x000000, "color_cursor_text"
-    $call get_config_color, 261, 0x00FFFF, "color_cursor_back"
+    $call get_config_color, 261, 0x00FF00, "color_cursor_back"
     $call get_config_color, 0, 0x000000, "color_black"
     $call get_config_color, 1, 0xBB0000, "color_red"
     $call get_config_color, 2, 0x00BB00, "color_green"

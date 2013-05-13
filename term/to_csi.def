@@ -36,7 +36,6 @@ subcode: term_out_SEEN_CSI
 		$call switch_c, 'f', HVP
 		$call switch_c, 'g', TBC
 		$call switch_c, 'h', MODE_HIGH_0
-		# $call switch_c, 'i', MC  # Media Copy, Printing
 		$call switch_c, 'l', MODE_LOW_0
 		$call switch_c, 'm', SGR
 		$call switch_c, 'n', DSR

@@ -1,3 +1,4 @@
+# ==== Editing & Echo =====================
 subcode:: function_list
     $define(CTRL(x)) (x^'@')
     $define(KCTRL(x)) ((x^'@')|0x100)
@@ -5,7 +6,6 @@ subcode:: function_list
 subcode: c_write(buf, len)
     term_data(term, $(buf), $(len))
 
-# ===============================================================
 subcode:: function_list
     $global s_ldisc_buf=NULL, n_ldisc_len=0, n_ldisc_size=0
     $global b_ldisc_quotenext=0
@@ -225,68 +225,3 @@ fncode: do_pwrite(unsigned char c)
 	sprintf(cc, "<%02X>", c);
 	$call c_write, cc, 4
 
-# -------------------------------------------------------------------------
-subcode:: function_list
-    $list linedisc_send_codepage, linedisc_send_unicode
-
-fncode: linedisc_send_codepage(n_codepage, s_buf, n_len)
-    $local wchar_t *p_wbuf
-
-    $if n_codepage<0
-	linedisc_send(s_buf, n_len)
-	return
-    $else
-	tn_size = n_len*2
-	$local_allocate(tn_size) p_wbuf
-	tn_wlen = mb_to_wc(n_codepage, 0, s_buf, n_len, p_wbuf, tn_size)
-	linedisc_send_unicode(p_wbuf, tn_wlen)
-
-fncode: linedisc_send_unicode(wchar_t *p_wbuf, n_len)
-    tn_ratio=1
-    $if in_utf
-	tn_ratio=3
-    tn_linesize =n_len * tn_ratio * 2
-    $local_allocate(tn_linesize) ts_line
-
-    $if in_utf
-	$call ldisc_send_utf
-    $else
-	tn_ret = wc_to_mb(line_codepage, p_wbuf, n_len, ts_line, tn_linesize)
-	$if tn_ret>0
-	    linedisc_send(ts_line, tn_ret)
-
-subcode: check_utf16
-    $if (tn_ch & 0xF800) == 0xD800
-	# in utf16, 0xD800 marks high surrogate and 0xDC00 marks  low surrogate
-	$if i< n_len-1
-	    unsigned long tn_ch2 = p_wbuf[i+1]
-	    $if (tn_ch & 0xFC00) == 0xD800 && (tn_ch2 & 0xFC00) == 0xDC00
-		tn_ch = 0x10000 + ((tn_ch & 0x3FF) << 10) + (tn_ch2 & 0x3FF)
-		i++;
-	$else
-	    ch = '.';
-
-subcode: ldisc_send_utf
-    $local char * p
-    p=ts_line
-    $for i=0:n_len
-	$local unsigned long tn_ch
-	tn_ch=p_wbuf[i]
-	$call check_utf16
-	# send utf8
-	$if tn_ch < 0x80
-	    *p++ = (char) (tn_ch)
-	$elif tn_ch < 0x800
-	    *p++ = (char) (0xC0 | (tn_ch >> 6));
-	    *p++ = (char) (0x80 | (tn_ch & 0x3F));
-	$elif tn_ch < 0x10000
-	    *p++ = (char) (0xE0 | (tn_ch >> 12));
-	    *p++ = (char) (0x80 | ((tn_ch >> 6) & 0x3F));
-	    *p++ = (char) (0x80 | (tn_ch & 0x3F));
-	$else
-	    *p++ = (char) (0xF0 | (tn_ch >> 18));
-	    *p++ = (char) (0x80 | ((tn_ch >> 12) & 0x3F));
-	    *p++ = (char) (0x80 | ((tn_ch >> 6) & 0x3F));
-	    *p++ = (char) (0x80 | (tn_ch & 0x3F));
-    $if p > ts_line
-	linedisc_send(ts_line, p - ts_line)

@@ -1,3 +1,5 @@
+subcode: term_out_filter
+    $call term_out_filter_utf8
 
 # ---- UTF8 -----------------------------------------------------
 subcode:: on_term_init
@@ -6,9 +8,11 @@ subcode:: on_term_init
     $.n_utf_size=0
 
 subcode: term_out_filter_utf8
+    $call debug, "term_out_filter_utf8 utf_state=%d\n", $.n_utf_state
     $if $.n_utf_state==0
 	$if c<0x80
-	    $call encode_ascii, c
+	    #$call encode_ascii, c
+	    #c=c|CSET_ASCII
 	$else
 	    $call term_out_utf8_firstbyte
 	    continue;
@@ -19,6 +23,7 @@ subcode: term_out_filter_utf8
 	$else 
 	    c = $.n_utf_char;
 	    $call term_out_utf8_sanity
+    $call debug, "term_out_filter_utf8 utf_state=%d utf_char=%x c=%x\n", $.n_utf_state, $.n_utf_char, c
 
 subcode: term_out_utf8_firstbyte
     $if c < 0x80

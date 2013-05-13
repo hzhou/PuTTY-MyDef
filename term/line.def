@@ -1,5 +1,5 @@
 subcode:: function_list
-    $list check_boundary, insch, resizeline
+    $list check_boundary, resizeline
     $list termchars_equal_override, termchars_equal
     $list copy_termchar, move_termchar
     $list find_last_nonempty_line
@@ -50,33 +50,6 @@ fncode: check_boundary(Terminal *term, int x, int y)
     $elif p_line->chars[x].chr == UCSWIDE
 	p_line->chars[x-1].chr = ' ' | CSET_ASCII;
 	p_line->chars[x] = p_line->chars[x-1];
-
-# -- Insert at x
-fncode: insch(Terminal *term, int x)
-    # insertion or deletion
-    tb_dir = (x < 0 ? -1 : +1);
-    x = (x < 0 ? -x : x);
-    $if x > $.cols - $.curs.x
-	x = $.cols - $.curs.x
-    tn_remain = $.cols-($.curs.x+x)
-    $local pos_t
-    pos_t.y = $.curs.y;
-    pos_t.x = $.curs.x + x;
-    $call @check_deselect, $.curs, pot_t
-    check_boundary(term, $.curs.x, $.curs.y);
-    $call get_screen_line, $.curs.y, p_line
-    $if tb_dir < 0
-	check_boundary(term, $.curs.x + x, $.curs.y);
-	$for j=0:tn_remain
-	    move_termchar(p_line, p_line->chars+$.curs.x+j, p_line->chars+$.curs.x+j+x)
-	$for j=0:x
-	    $call erase_termchar, $.curs.x+tn_remain+j
-    $else
-	$for j=tn_remain; j-- ;
-	$for j=0:tn_remain
-	    move_termchar(p_line, p_line->chars+$.cols-1-j, p_line->chars+$.cols-1-x-j)
-	$for j=0:x
-	    $call erase_termchar, $.curs.x + x+j
 
 # ---- Termchar  ----------------------------
 subcode: cmp_chr(a, b)

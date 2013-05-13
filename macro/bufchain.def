@@ -11,8 +11,8 @@ subcode: bufchain_clear(inbuf)
     $call slist_clear, $(inbuf)
 
 subcode: bufchain_add(inbuf, data, len)
+    $get_struct_var_prefix(sl) $(inbuf)
     $if $(len)>0
-	$get_struct_var_prefix(sl) $(inbuf)
 	$(sl)n_total+=$(len)
 	&call slist_tail, $(inbuf)
 	    $call bufchain_add_copy
@@ -25,6 +25,7 @@ subcode: bufchain_add_copy
     $if tn_copylen>$(len)
 	tn_copylen=$(len)
     memcpy($(p)->s_buf+$(p)->n_len, $(data), tn_copylen)
+    $(p)->n_len+=tn_copylen
     $(data)+=tn_copylen
     $(len)-=tn_copylen
 
@@ -61,7 +62,6 @@ subcode: bufchain_unget(c)
     tn_unget=$(c)
 
 subcode: bufchain_get(inbuf)
-    $get_struct_var_prefix(sl) $(inbuf)
     &call slist_head, $(inbuf)
 	ts_tmp=$(p)->s_buf+$(p)->n_pos
 	tn_len=$(p)->n_len-$(p)->n_pos
@@ -73,6 +73,7 @@ subcode: bufchain_get(inbuf)
 	$(sl)n_total-=tn_len
 
 	$if $(p)->n_pos>=$(p)->n_len
-	    $(sl)head=$(sl)head->next
+	    $call slist_shift, $(inbuf)
+	    free($(p))
 
 

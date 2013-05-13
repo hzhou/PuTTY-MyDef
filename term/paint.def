@@ -8,6 +8,10 @@ subcode:: on_term_init
     $.curstype = 0;
     $call term_get_config, "scroll_on_disp", b_scroll_on_disp, 1
 
+subcode:: on_term_key_event
+    $.disptop=0
+    $call seen_disp_event
+
 subcode:: on_term_finish
     $if $.disp
 	$for i=0:$.rows

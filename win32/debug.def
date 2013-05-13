@@ -1,7 +1,14 @@
+subcode: assert_action
+    $call msgbox, "Assert Error: $(check) @ line %d", __LINE__
+    exit(0)
 
-subcode: init_console
+subcode: debug_on
     AllocConsole()
     freopen("conout$", "w", stdout)
+
+subcode: debug(@msg)
+    printf($(msg))
+    #Sleep(1000)
 
 subcode: dump_msg
     $local static t_last_msg=0
