@@ -26,9 +26,6 @@ page: term_inc
 	$global extern int line_codepage
 	$declare void linedisc_send(char * s_buf, int n_len)
 
-	$write_h(term.h) term
-	$struct(tagTerminal) $term
-
 	$call @global
 	$call @function_list
 
