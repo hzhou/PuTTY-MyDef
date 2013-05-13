@@ -1,0 +1,7 @@
+
+subcode: fit_range(var, a, b)
+    $if $(var)<$(a)
+	$(var)=$(a)
+    $elif $(var)>=$(b)
+	$(var)=$(b)-1
+
