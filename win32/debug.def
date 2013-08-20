@@ -1,14 +1,46 @@
+include: win32/winsock.def
+
+subcode:: _autoload
+    $global SOCKET socket_debug=0
+    $global s_debug_buffer[1024]
+    print usesub:socket_print
+
 subcode: assert_action
-    $call msgbox, "Assert Error: $(check) @ line %d", __LINE__
+    $call msgbox, "Assert Error: $(check) @ %s:line %d", __FILE__, __LINE__
     exit(0)
 
 subcode: debug_on
+    $call winsock_init
+    $call socket_connect, "192.168.2.11", 1300
+    $if tn_ret
+	socket_debug=tn_socket
+	print "START\n"
+
+
+subcode: socket_print(@msg)
+    $if socket_debug
+	tn_temp_len=snprintf(s_debug_buffer, 1024, $(msg))
+	tn_temp_len=send(socket_debug, s_debug_buffer, tn_temp_len, 0)
+	$if tn_temp_len==SOCKET_ERROR
+	    printf "SOCKET ERROR: %d\n", WSAGetLastError()
+	    socket_debug=0
+
+# -------------------------------------
+subcode: debug_on_console
     AllocConsole()
     freopen("conout$", "w", stdout)
 
 subcode: debug(@msg)
     printf($(msg))
     #Sleep(1000)
+
+# ----
+subcode: case_dump(name)
+    $case $(val) == $(name)
+	print $(val): $(name) ($$(val))
+subcode: debug_NETEVENT
+    $(set:val=tn_event)
+    $map case_dump, FD_CONNECT, FD_READ, FD_WRITE, FD_OOB, FD_CONNECT, FD_ACCEPT
 
 subcode: dump_msg
     $local static t_last_msg=0

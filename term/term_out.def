@@ -29,7 +29,7 @@ fncode: term_out(Terminal *term)
     $call @term_out_global
     $local int c
     &call bufchain_char_loop, $.inbuf, c
-	# printf("termstate=%d, c=%x [%c]\n", $.n_termstate, c, (char)c);
+	print "termstate=%d, c=%x [%c]\n", $.n_termstate, c, (char)c
 	$call @term_out_pre  # Specific feature
 	$call @term_out_pre2 # General feature
 	$if $.n_termstate == termstate_TOPLEVEL
@@ -106,10 +106,6 @@ subcode: term_char_out_wide
     $.curs.x++
     $call set_termchar, p_line, $.curs.x, UCSWIDE
 
-# Combining characters
-# There appears to be limited cases for this
-# Rather than adding 50% more complexity, maybe we could simply 
-#   utilize a few bits in attributes?
 subcode: term_char_out_cc
     $if $.curs.x > 0
 	tn_x = $.curs.x - 1;
@@ -118,8 +114,6 @@ subcode: term_char_out_cc
 	$if p_line->chars[tn_x].chr == UCSWIDE
 	    $call assert, tn_x>0
 	    tn_x--;
-	#add_cc(p_line, tn_x, c);
-	# or add attribute flag
 
 # ----
 subcode: term_char_out_clear_ucswide(x)
@@ -139,17 +133,6 @@ subcode: term_out_wrap
     $call term_do_CR_only
     $.wrapnext = 0
     $call get_screen_line, $.curs.y, p_line
-
-subcode: term_do_LF_only
-    $if $.curs.y == $.rows - 1
-	$call scroll_down_one
-    $elif $.curs.y < $.rows - 1
-	$.curs.y++
-    $.wrapnext = FALSE;
-
-subcode: term_do_CR_only
-    $.curs.x = 0;
-    $.wrapnext = FALSE;
 
 # ----------------------------
 subcode: switch_c(case, name)

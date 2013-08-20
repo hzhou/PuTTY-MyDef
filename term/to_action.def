@@ -65,23 +65,25 @@ subcode: term_do_HT
 	    $.curs.x = $.cols - 1;
     $call @check_deselect(old_curs, $.curs)
 
-subcode:: on_term_init
-    $call term_get_config, "crhaslf", b_crhaslf, 1
-    $call term_get_config, "lfhascr", b_lfhascr, 0
+subcode: term_do_LF_only
+    $if $.curs.y == $.rows - 1
+	$call scroll_down_one
+    $elif $.curs.y < $.rows - 1
+	$.curs.y++
+    $.wrapnext = FALSE;
+
+subcode: term_do_CR_only
+    $.curs.x = 0;
+    $.wrapnext = FALSE;
 
 subcode: term_do_CR
     $call seen_disp_event
-    $call debug, "term_do_CR b_crhaslf=%d\n", $.b_crhaslf
-    $if $.b_crhaslf
-	$call term_do_LF_only
     $call term_do_CR_only
     $call @term_out_log_traffic
 
 subcode: term_do_LF
     $call seen_disp_event
     $call term_do_LF_only
-    $if $.b_lfhascr
-	$call term_do_CR_only
     $call @term_out_log_traffic
 
 subcode: term_do_FF

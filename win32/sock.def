@@ -1,4 +1,0 @@
-subcode: winsock_init
-    $local WSADATA wsa
-    tn_ret= WSAStartup(MAKEWORD(2,2), &wsa) 
-    assert(tn_ret==0)

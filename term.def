@@ -1,12 +1,10 @@
-include: cfg.def
+include: autoload.def
 
 include: macro/misc.def
 include: macro/charset.def
 include: macro/attr.def
 include: macro/clist.def
 include: macro/bufchain.def
-
-include: win32/debug.def
 
 include: term/main.def
 include: term/misc.def

@@ -186,8 +186,8 @@ fncode: another_font(n)
 	return;
 
     tn_basefont = (n & ~(FONT_BOLDUND));
-    $if tn_basefont != n && !fontflag[tn_basefont])
-	another_font(tn_basefont);
+    $if tn_basefont != n && !fontflag[tn_basefont]
+	another_font(tn_basefont)
 
     $call set_fontweight
 

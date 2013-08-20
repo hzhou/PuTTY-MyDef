@@ -1,264 +1,165 @@
+include: autoload.def
+
 page: telnet
+    autoload: h
     subcode: main
-	$(set:this=telnet->)
-	$typedef struct tagTelnet * Telnet
+	$include ws2tcpip.h
+	$(set:this=this->)
+
+	$call api_create, telnet, backend
+	$struct(backend_telnet) SOCKET socket
+
 	$call @global
 	$call @function_list
 
 subcode: this_decl(var)
-    $struct(tagTelnet) $(var)
+    $struct(backend_telnet) $(var)
 
-/*
- * Generate side effects of enabling or disabling an option.
- */
-static void option_side_effects(Telnet telnet, const struct Opt *o, int enabled)
-{
-    if (o->option == TELOPT_ECHO && o->send == DO)
-	telnet->echoing = !enabled;
-    else if (o->option == TELOPT_SGA && o->send == DO)
-	telnet->editing = !enabled;
-    //if (telnet->ldisc) ldisc_send(telnet->ldisc, NULL, 0, 0);
+# ---------------------------------------------------------
+subcode: telnet_connect(host, port)
+    $call socket_connect, $(host), $(port)
+    $if tn_ret
+	$.socket=tn_socket
+	&call socket_select, tn_socket, this
+	    $local struct backend_telnet * this
+	    this=(struct backend_telnet *)data
+	    #$call @debug_NETEVENT
+	    $if tn_event==FD_READ
+		$call telnet_read
 
-    /* Ensure we get the minimum options */
-    if (!telnet->activated) {
-	if (telnet->opt_states[o_echo.index] == INACTIVE) {
-	    telnet->opt_states[o_echo.index] = REQUESTED;
-	    $call send_opt, o_echo.send, o_echo.option
-	}
-	if (telnet->opt_states[o_we_sga.index] == INACTIVE) {
-	    telnet->opt_states[o_we_sga.index] = REQUESTED;
-	    $call send_opt, o_we_sga.send, o_we_sga.option
-	}
-	if (telnet->opt_states[o_they_sga.index] == INACTIVE) {
-	    telnet->opt_states[o_they_sga.index] = REQUESTED;
-	    $call send_opt, o_they_sga.send, o_they_sga.option
-	}
-	telnet->activated = TRUE;
-    }
-}
+subcode: telnet_disconnect
+    close($.socket)
+    $call clear_select, $.socket
+    from_backend("remote closed.", 14)
 
-subcode: request_minimum_options
-    $call send_opt, DO, TELOPT_ECHO
-    $call send_opt, DO, TELOPT_SGA
-    $call send_opt, WILL, TELOPT_SGA
+# ---------------------------------------------------------
+subcode: telnet_init
+    $call get_config, "host", ts_host, "192.168.2.11"
+    $call get_config, "port", tn_port, 23
 
+    $call @on_telnet_init
+    print telnet_init: $ts_host $tn_port
+    $call telnet_connect, ts_host, tn_port
+    $if !$.socket
+	return "telnet: Failed to connect!"
+    # $call request_minimum_options
 
-subcode: proc_rec_opt(n_cmd, n_opt)
-    $call proc_opt, NAWS
+subcode: telnet_free
+    $if $.sb_buf
+	free($.sb_buf)
+    $if $.socket
+	close($.socket)
+
+# -------------------------------------
+subcode: telnet_read
+    $local ts_buf[1024], tn_len
+    tn_ret=recv($.socket, ts_buf, sizeof(ts_buf), 0)
+    $if tn_ret<0
+	tn_ret=WSAGetLastError()
+	$if tn_ret!=WSAEWOULDBLOCK
+	    $call telnet_disconnect
+    $elif tn_ret==0
+	$call telnet_disconnect
     $else
-	$if n_cmd==WILL
-	    $call send_opt, DONT, n_opt
-	$elif n_cmd==DO
-	    $call send_opt, WONT, n_opt
+	tn_len=tn_ret
+	$call do_telnet_read, ts_buf, tn_len
 
-subcode: proc_opt(OPT)
-    $if n_opt==TELOPT_$(OPT)
-	$if n_cmd==DO
-	    $if $.n_$(OPT)==INACTIVE
-		$call send_opt, WILL, n_opt
-	    $.n_$(OPT)=ACTIVE
-	    $call @on_DO_$(OPT)
-	$elif n_cmd==DONT
-	    $if $.n_$(OPT)==INACTIVE
-		$call send_opt, WONT, n_opt
-	    $.n_$(OPT)==INACTIVE
-	    $call @on_DONt_$(OPT)
-	$elif n_cmd==WILL
-	    $if $.n_$(OPT)==INACTIVE
-		$call send_opt, DO, n_opt
-	    $.n_$(OPT)=ACTIVE
-	    $call @on_WILL_$(OPT)
-	$elif n_cmd==WONT
-	    $if $.n_$(OPT)==INACTIVE
-		$call send_opt, DONT, n_opt
-	    $.n_$(OPT)==INACTIVE
-	    $call @on_WONT_$(OPT)
+subcode: telnet_send
+    $if $.socket
+	$local unsigned char * p
+	$local unsigned char * end
+	$local unsigned char * q
+	p=ts_buf
+	end=ts_buf+tn_len
+	$while p<end
+	    q=p
+	    $while p<end && *p!=IAC
+		p++
+	    $call socket_send, q, p-q
+	    $while p<end && *p==IAC
+		$if *p==IAC
+		    $local unsigned char iac[2] = {IAC,IAC}
+		    $call socket_send, iac, 2
+		$else
+		    $local unsigned char cr[2] = {CR,NUL}
+		    $call socket_send, cr, 2
+		p++
+    return 0
 
-# -- NAWS
-subcode:: on_telnet_init
-    $call this_decl, n_NAWS
-    $.n_NAWS=INACTIVE
+subcode: debug_telnet_send
+    c=*$(buf)
+    n=$(len)
+    print telnet_send [$n] $c -- $tn_ret
 
-subcode: on_DO_NAWS
-    telnet_size(telnet, $.term_width, $.term_height)
+subcode: socket_send(buf, len)
+    tn_ret=send($.socket, (char *)$(buf), $(len), 0)
+    $call @debug_telnet_send
 
-# -- ECHO
-subcode:: on_telnet_init
-    $call this_decl, b_echo
-    $.b_echo=0
+# -------------------------------
+subcode: telnet_size
+    $.n_rows = tn_rows
+    $.n_cols = tn_cols
+    $if $.socket 
+	$call telnet_size_send
 
-subcode: on_WILL_ECHO
-    $.b_echo=1
+subcode: telnet_size_send
+    $local unsigned char b[24]
+    $local int n
+    n = 0;
+    b[n++] = IAC;
+    b[n++] = SB;
+    b[n++] = TELOPT_NAWS;
+    $call add_byte, $.n_rows>>8
+    $call add_byte, $.n_rows&0xff
+    $call add_byte, $.n_cols>>8
+    $call add_byte, $.n_cols&0xff
+    b[n++] = IAC;
+    b[n++] = SE;
+    $call socket_send, b, n
 
-subcode: on_WONT_ECHO
-    $.b_echo=0
-
-# -- SGA
-subcode:: on_telnet_init
-    $call this_decl, b_edit
-    $.b_edit=0
-
-subcode: on_WILL_SGA
-    $.b_edit=1
-
-subcode: on_WONT_SGA
-    $.b_edit=0
-
-static void process_subneg(Telnet telnet)
-{
-    unsigned char b[2048], *p, *q;
-    int var, value, n;
-    char *e;
-
-    switch (telnet->sb_opt) {
-      case TELOPT_TSPEED:
-	if (telnet->sb_len == 1 && telnet->sb_buf[0] == TELQUAL_SEND) {
-	    char *logbuf;
-	    b[0] = IAC;
-	    b[1] = SB;
-	    b[2] = TELOPT_TSPEED;
-	    b[3] = TELQUAL_IS;
-	    strcpy((char *)(b + 4), telnet->cfg.termspeed);
-	    n = 4 + strlen(telnet->cfg.termspeed);
-	    b[n] = IAC;
-	    b[n + 1] = SE;
-	    telnet->bufsize = sk_write(telnet->s, (char *)b, n + 2);
-	    logevent(telnet->frontend, "server:\tSB TSPEED SEND");
-	    logbuf = dupprintf("client:\tSB TSPEED IS %s", telnet->cfg.termspeed);
-	    logevent(telnet->frontend, logbuf);
-	    sfree(logbuf);
-	} else
-	    logevent(telnet->frontend, "server:\tSB TSPEED <something weird>");
-	break;
-      case TELOPT_TTYPE:
-	if (telnet->sb_len == 1 && telnet->sb_buf[0] == TELQUAL_SEND) {
-	    char *logbuf;
-	    b[0] = IAC;
-	    b[1] = SB;
-	    b[2] = TELOPT_TTYPE;
-	    b[3] = TELQUAL_IS;
-	    for (n = 0; telnet->cfg.termtype[n]; n++)
-		b[n + 4] = (telnet->cfg.termtype[n] >= 'a'
-			    && telnet->cfg.termtype[n] <=
-			    'z' ? telnet->cfg.termtype[n] + 'A' -
-			    'a' : telnet->cfg.termtype[n]);
-	    b[n + 4] = IAC;
-	    b[n + 5] = SE;
-	    telnet->bufsize = sk_write(telnet->s, (char *)b, n + 6);
-	    b[n + 4] = 0;
-	    logevent(telnet->frontend, "server:\tSB TTYPE SEND");
-	    logbuf = dupprintf("client:\tSB TTYPE IS %s", b + 4);
-	    logevent(telnet->frontend, logbuf);
-	    sfree(logbuf);
-	} else
-	    logevent(telnet->frontend, "server:\tSB TTYPE <something weird>\r\n");
-	break;
-      case TELOPT_OLD_ENVIRON:
-      case TELOPT_NEW_ENVIRON:
-	p = telnet->sb_buf;
-	q = p + telnet->sb_len;
-	if (p < q && *p == TELQUAL_SEND) {
-	    char *logbuf;
-	    p++;
-	    logbuf = dupprintf("server:\tSB %s SEND", telopt(telnet->sb_opt));
-	    logevent(telnet->frontend, logbuf);
-	    sfree(logbuf);
-	    if (telnet->sb_opt == TELOPT_OLD_ENVIRON) {
-		if (telnet->cfg.rfc_environ) {
-		    value = RFC_VALUE;
-		    var = RFC_VAR;
-		} else {
-		    value = BSD_VALUE;
-		    var = BSD_VAR;
-		}
-		/*
-		 * Try to guess the sense of VAR and VALUE.
-		 */
-		while (p < q) {
-		    if (*p == RFC_VAR) {
-			value = RFC_VALUE;
-			var = RFC_VAR;
-		    } else if (*p == BSD_VAR) {
-			value = BSD_VALUE;
-			var = BSD_VAR;
-		    }
-		    p++;
-		}
-	    } else {
-		/*
-		 * With NEW_ENVIRON, the sense of VAR and VALUE
-		 * isn't in doubt.
-		 */
-		value = RFC_VALUE;
-		var = RFC_VAR;
-	    }
-	    b[0] = IAC;
-	    b[1] = SB;
-	    b[2] = telnet->sb_opt;
-	    b[3] = TELQUAL_IS;
-	    n = 4;
-	    e = telnet->cfg.environmt;
-	    while (*e) {
-		b[n++] = var;
-		while (*e && *e != '\t')
-		    b[n++] = *e++;
-		if (*e == '\t')
-		    e++;
-		b[n++] = value;
-		while (*e)
-		    b[n++] = *e++;
-		e++;
-	    }
-	    {
-		char user[sizeof(telnet->cfg.username)];
-		(void) get_remote_username(&telnet->cfg, user, sizeof(user));
-		if (*user) {
-		    b[n++] = var;
-		    b[n++] = 'U';
-		    b[n++] = 'S';
-		    b[n++] = 'E';
-		    b[n++] = 'R';
-		    b[n++] = value;
-		    e = user;
-		    while (*e)
-			b[n++] = *e++;
-		}
-		b[n++] = IAC;
-		b[n++] = SE;
-		telnet->bufsize = sk_write(telnet->s, (char *)b, n);
-		logbuf = dupprintf("client:\tSB %s IS %s%s%s%s",
-				   telopt(telnet->sb_opt),
-				   *user ? "USER=" : "",
-				   user,
-				   *user ? " " : "",
-				   n == 6 ? "<nothing>" :
-				   (*telnet->cfg.environmt ? "<stuff>" : ""));
-		logevent(telnet->frontend, logbuf);
-		sfree(logbuf);
-	    }
-	}
-	break;
-    }
-}
+subcode: add_byte(byte)
+    b[n]=$(byte)
+    $if b[n]==IAC
+	n++
+	b[n]=IAC
+    n++
 
 # ============================================
 subcode: do_telnet_read(buf, len)
     $call da_init, out
+    $local unsigned char * ts, int c
+    ts=$(buf)
+    c=*ts
+    print do_telnet_read: $$(len) - $c
     $while $(len)--
-	$local int c
-	c = (unsigned char) *$(buf)++;
-	$call @do_telnet_read_IAC
-	$call @do_telnet_read_CR
-	$call @do_telnet_sync
-	$call da_add, out, c
-	$.n_state = TOP_LEVEL;
+	c = *ts++
+	$call do_telnet_read_char
+	$else
+	    $call da_add, out, c
+	    $.n_state = TOP_LEVEL;
 
     $if out_len
-	tn_ret=from_backend(telnet->frontend, 0, outbuf, outbuflen)
-	c_write(telnet, outbuf, outbuflen);
-	sk_set_frozen(telnet->s, tn_ret > TELNET_MAX_BACKLOG);
+	tn_ret=from_backend(out_buf, out_len)
     $if out_buf
 	free(out_buf)
+
+subcode: do_telnet_read_char
+    $if $.n_state==IAC
+	$if c>=250 && c<=254
+	    $.n_state=c
+	$else
+	    $if c==IAC
+		$call da_add, out, c
+	    $.n_state=TOP_LEVEL
+    $map do_telnet_IAC, WILL, WONT, DO, DONT
+    $call do_telnet_process_SUBNEGOT
+    # $call @do_telnet_read_CR
+    # $call @do_telnet_sync
+    $elif $.n_state != TOP_LEVEL
+	$.n_state=TOP_LEVEL
+    $elif c==IAC
+	$.n_state=IAC
+	continue
 
 # ---- -------------------------------
 subcode:: global
@@ -297,46 +198,89 @@ subcode: do_telnet_read_CR
 	continue
 
 # --------------------
-subcode:: global
-    $define(IAC) 255
-    $define(DONT) 254
-    $define(DO) 253
-    $define(WONT) 252
-    $define(WILL) 251
-    $define(SB) 250
-
-    $define(SE) 240
-
-subcode: do_telnet_read_IAC
-    $if $.n_state!=TOP_LEVEL && $.n_state!=SEENCR
-	$call do_telnet_process_IAC
-	continue
-    $elif c==IAC
-	$.n_state=IAC
-	continue
-
-subcode: do_telnet_process_IAC
-    $if $.n_state==IAC
-	$if c>=250 && c<=254
-	    $.n_state=c
-	$else
-	    $if c==IAC
-		$call da_add, out, c
-	    $elif c==DM
-		$.in_synch=0
-	    $.n_state=TOP_LEVEL
-    $map do_telnet_IAC, WILL, WONT, DO, DONT
-    $call @do_telnet_process_SUBNEGOT
-
 subcode: do_telnet_IAC(cmd)
     $elif $.n_state==$(cmd)
-	proc_rec_opt(telnet, $(cmd), c)
+	n_cmd=$(cmd)
+	n_opt=c
+	$call @debug_IAC
+	$call proc_rec_opt
 	$.n_state=TOP_LEVEL
+
+subcode: debug_IAC
+    print IAC $(cmd) $c
+
+# ---------------------
+subcode: request_minimum_options
+    $call send_opt, DO, TELOPT_ECHO
+    $call send_opt, DO, TELOPT_SGA
+    $call send_opt, WILL, TELOPT_SGA
+
+
+subcode: proc_rec_opt
+    $if 0
+	# NOOP
+    #$map proc_opt, NAWS, ECHO, SGA
+    $else
+	$if n_cmd==WILL
+	    $call send_opt, DONT, n_opt
+	$elif n_cmd==DO
+	    $call send_opt, WONT, n_opt
+
+subcode: proc_opt(OPT)
+    $elif n_opt==TELOPT_$(OPT)
+	$if n_cmd==DO
+	    $call send_opt, WILL, n_opt
+	    $call @on_DO_$(OPT)
+	$elif n_cmd==DONT
+	    $call send_opt, WONT, n_opt
+	    $call @on_DONt_$(OPT)
+	$elif n_cmd==WILL
+	    $call send_opt, DO, n_opt
+	    $call @on_WILL_$(OPT)
+	$elif n_cmd==WONT
+	    $call send_opt, DONT, n_opt
+	    $call @on_WONT_$(OPT)
+
+subcode: send_opt(cmd, opt)
+    print send_opt $(cmd)  $$(opt)
+    $local pc_buf[100]
+    pc_buf[0]=IAC
+    pc_buf[1]=$(cmd)
+    pc_buf[2]=$(opt)
+
+    $call socket_send, pc_buf, 3
+
+# -------------------
+# -- NAWS
+subcode: on_DO_NAWS
+    $call this_decl, n_WILL_NAWS
+    $.n_WILL_NAWS=2
+    $call telnet_size_send
+
+# -- ECHO
+subcode:: on_telnet_init
+    $call this_decl, b_echo
+
+subcode: on_WILL_ECHO
+    $.b_echo=1
+
+subcode: on_WONT_ECHO
+    $.b_echo=0
+
+# -- SGA
+subcode:: on_telnet_init
+    $call this_decl, b_edit
+
+subcode: on_WILL_SGA
+    $.b_edit=1
+
+subcode: on_WONT_SGA
+    $.b_edit=0
 
 # --------
 subcode:: global
     $call this_decl, int sb_opt
-    $call this_decl, char * sb_buf, int sb_size, int sb_len
+    $map this_decl, char * sb_buf, int sb_size, int sb_len
 
 subcode:: on_telnet_init
     $.sb_buf=NULL
@@ -352,377 +296,133 @@ subcode: do_telnet_process_SUBNEGOT
 	$if c==IAC
 	    $.n_state=SUBNEG_IAC
 	$else
-	    $call da_add, telnet->sb, c
+	    $call da_add, this->sb, c
     $elif $.n_state==SUBNEG_IAC
 	$if c==SE
-	    process_subneg(telnet);
+	    # $call process_subneg
 	    $.n_state = TOP_LEVEL;
 	$else
-	    $call da_add, telnet->sb, c
+	    $call da_add, this->sb, c
 	    $.n_state=SUBNEGOT
 
-# ====================================================
-static void telnet_log(Plug plug, int type, SockAddr addr, int port,
-		       const char *error_msg, int error_code)
-{
-    Telnet telnet = (Telnet) plug;
-    char addrbuf[256], *msg;
+# ----
+subcode: process_subneg
+    $if $.sb_opt==TELOPT_TSPEED
+	$call process_subneg_TSPEED
+    $elif $.sb_opt==TELOPT_TTYPE
+	$call process_subneg_TTYPE
+    $elif $.sb_opt==TELOPT_OLD_ENVIRON || $.sb_opt==TELOPT_NEW_ENVIRON
+	$call process_subneg_ENVIRON
 
-    sk_getaddr(addr, addrbuf, lenof(addrbuf));
+subcode: process_subneg_TSPEED
+    $local unsigned char b[2048]
+    $if $.sb_len == 1 && $.sb_buf[0] == TELQUAL_SEND
+	b[0] = IAC;
+	b[1] = SB;
+	b[2] = TELOPT_TSPEED;
+	b[3] = TELQUAL_IS;
+	strcpy((char *)(b + 4), telnet->cfg.termspeed);
+	n = 4 + strlen(telnet->cfg.termspeed);
+	b[n] = IAC;
+	b[n + 1] = SE;
+	$call socket_send, b, n+2
+	logevent(telnet->frontend, "server:\tSB TSPEED SEND");
+    $else
+	logevent(telnet->frontend, "server:\tSB TSPEED <something weird>");
 
-    if (type == 0)
-	msg = dupprintf("Connecting to %s port %d", addrbuf, port);
-    else
-	msg = dupprintf("Failed to connect to %s: %s", addrbuf, error_msg);
+subcode: process_subneg_TTYPE
+    $local unsigned char b[2048]
+    $if telnet->sb_len == 1 && telnet->sb_buf[0] == TELQUAL_SEND
+	b[0] = IAC;
+	b[1] = SB;
+	b[2] = TELOPT_TTYPE;
+	b[3] = TELQUAL_IS;
+	for (n = 0; telnet->cfg.termtype[n]; n++)
+	    b[n + 4] = (telnet->cfg.termtype[n] >= 'a'
+			&& telnet->cfg.termtype[n] <=
+			'z' ? telnet->cfg.termtype[n] + 'A' -
+			'a' : telnet->cfg.termtype[n]);
+	b[n + 4] = IAC;
+	b[n + 5] = SE;
+	$call socket_send, b, n+6
+	b[n + 4] = 0;
+	logevent(telnet->frontend, "server:\tSB TTYPE SEND");
+    $else
+	logevent(telnet->frontend, "server:\tSB TTYPE <something weird>\r\n");
 
-    logevent(telnet->frontend, msg);
-}
-
-static int telnet_closing(Plug plug, const char *error_msg, int error_code,
-			  int calling_back)
-{
-    Telnet telnet = (Telnet) plug;
-
-    if (telnet->s) {
-        sk_close(telnet->s);
-        telnet->s = NULL;
-	notify_remote_exit(telnet->frontend);
-    }
-    if (error_msg) {
-	logevent(telnet->frontend, error_msg);
-	connection_fatal(telnet->frontend, "%s", error_msg);
-    }
-    /* Otherwise, the remote side closed the connection normally. */
-    return 0;
-}
-
-static int telnet_receive(Plug plug, int urgent, char *data, int len)
-{
-    Telnet telnet = (Telnet) plug;
-    if (urgent)
-	telnet->in_synch = TRUE;
-    $call do_telnet_read, data, len
-    return 1;
-}
-
-static void telnet_sent(Plug plug, int bufsize)
-{
-    Telnet telnet = (Telnet) plug;
-    telnet->bufsize = bufsize;
-}
-
-/*
- * Called to set up the Telnet connection.
- *
- * Returns an error message, or NULL on success.
- *
- * Also places the canonical host name into `realhost'. It must be
- * freed by the caller.
- */
-static const char *telnet_init(void *frontend_handle, void **backend_handle,
-			       Config *cfg,
-			       char *host, int port, char **realhost,
-			       int nodelay, int keepalive)
-{
-    static const struct plug_function_table fn_table = {
-	telnet_log,
-	telnet_closing,
-	telnet_receive,
-	telnet_sent
-    };
-    SockAddr addr;
-    const char *err;
-    Telnet telnet;
-
-    telnet = snew(struct telnet_tag);
-    telnet->fn = &fn_table;
-    telnet->cfg = *cfg;		       /* STRUCTURE COPY */
-    telnet->s = NULL;
-    telnet->echoing = TRUE;
-    telnet->editing = TRUE;
-    telnet->activated = FALSE;
-    telnet->sb_buf = NULL;
-    telnet->sb_size = 0;
-    telnet->frontend = frontend_handle;
-    telnet->term_width = telnet->cfg.width;
-    telnet->term_height = telnet->cfg.height;
-    telnet->ldisc = NULL;
-    telnet->pinger = NULL;
-    *backend_handle = telnet;
-
-    /*
-     * Try to find host.
-     */
-    {
-	char *buf;
-	buf = dupprintf("Looking up host \"%s\"%s", host,
-			(cfg->addressfamily == ADDRTYPE_IPV4 ? " (IPv4)" :
-			 (cfg->addressfamily == ADDRTYPE_IPV6 ? " (IPv6)" :
-			  "")));
-	logevent(telnet->frontend, buf);
-	sfree(buf);
-    }
-    addr = name_lookup(host, port, realhost, &telnet->cfg, cfg->addressfamily);
-    if ((err = sk_addr_error(addr)) != NULL) {
-	sk_addr_free(addr);
-	return err;
-    }
-
-    if (port < 0)
-	port = 23;		       /* default telnet port */
-
-    /*
-     * Open socket.
-     */
-    telnet->s = new_connection(addr, *realhost, port, 0, 1,
-			       nodelay, keepalive, (Plug) telnet, &telnet->cfg);
-    if ((err = sk_socket_error(telnet->s)) != NULL)
-	return err;
-
-    telnet->pinger = pinger_new(&telnet->cfg, &telnet_backend, telnet);
-
-    /*
-     * Initialise option states.
-     */
-    if (telnet->cfg.passive_telnet) {
-	const struct Opt *const *o;
-
-	for (o = opts; *o; o++)
-	    telnet->opt_states[(*o)->index] = INACTIVE;
-    } else {
-	const struct Opt *const *o;
-
-	for (o = opts; *o; o++) {
-	    telnet->opt_states[(*o)->index] = (*o)->initial_state;
-	    if (telnet->opt_states[(*o)->index] == REQUESTED)
-		$cal send_opt, (*o)->send, (*o)->option
-	}
-	telnet->activated = TRUE;
-    }
-
-    /*
-     * Set up SYNCH state.
-     */
-    telnet->in_synch = FALSE;
-
-    /*
-     * We can send special commands from the start.
-     */
-    update_specials_menu(telnet->frontend);
-
-    /*
-     * loghost overrides realhost, if specified.
-     */
-    if (*telnet->cfg.loghost) {
-	char *colon;
-
-	sfree(*realhost);
-	*realhost = dupstr(telnet->cfg.loghost);
-	colon = strrchr(*realhost, ':');
-	if (colon) {
+subcode: process_subneg_ENVIRON
+    $local unsigned char * p
+    $local unsigned char * q
+    p = telnet->sb_buf;
+    q = p + telnet->sb_len;
+    if (p < q && *p == TELQUAL_SEND) {
+	p++;
+	if (telnet->sb_opt == TELOPT_OLD_ENVIRON) {
+	    if (telnet->cfg.rfc_environ) {
+		value = RFC_VALUE;
+		var = RFC_VAR;
+	    } else {
+		value = BSD_VALUE;
+		var = BSD_VAR;
+	    }
 	    /*
-	     * FIXME: if we ever update this aspect of ssh.c for
-	     * IPv6 literal management, this should change in line
-	     * with it.
+	     * Try to guess the sense of VAR and VALUE.
 	     */
-	    *colon++ = '\0';
+	    while (p < q) {
+		if (*p == RFC_VAR) {
+		    value = RFC_VALUE;
+		    var = RFC_VAR;
+		} else if (*p == BSD_VAR) {
+		    value = BSD_VALUE;
+		    var = BSD_VAR;
+		}
+		p++;
+	    }
+	} else {
+	    /*
+	     * With NEW_ENVIRON, the sense of VAR and VALUE
+	     * isn't in doubt.
+	     */
+	    value = RFC_VALUE;
+	    var = RFC_VAR;
+	}
+	b[0] = IAC;
+	b[1] = SB;
+	b[2] = telnet->sb_opt;
+	b[3] = TELQUAL_IS;
+	n = 4;
+	e = telnet->cfg.environmt;
+	while (*e) {
+	    b[n++] = var;
+	    while (*e && *e != '\t')
+		b[n++] = *e++;
+	    if (*e == '\t')
+		e++;
+	    b[n++] = value;
+	    while (*e)
+		b[n++] = *e++;
+	    e++;
+	}
+	{
+	    char user[sizeof(telnet->cfg.username)];
+	    (void) get_remote_username(&telnet->cfg, user, sizeof(user));
+	    if (*user) {
+		b[n++] = var;
+		b[n++] = 'U';
+		b[n++] = 'S';
+		b[n++] = 'E';
+		b[n++] = 'R';
+		b[n++] = value;
+		e = user;
+		while (*e)
+		    b[n++] = *e++;
+	    }
+	    b[n++] = IAC;
+	    b[n++] = SE;
+	    $call socket_send, b, n
 	}
     }
-
-    return NULL;
-}
-
-static void telnet_free(void *handle)
-{
-    Telnet telnet = (Telnet) handle;
-
-    sfree(telnet->sb_buf);
-    if (telnet->s)
-	sk_close(telnet->s);
-    if (telnet->pinger)
-	pinger_free(telnet->pinger);
-    sfree(telnet);
-}
-/*
- * Reconfigure the Telnet backend. There's no immediate action
- * necessary, in this backend: we just save the fresh config for
- * any subsequent negotiations.
- */
-static void telnet_reconfig(void *handle, Config *cfg)
-{
-    Telnet telnet = (Telnet) handle;
-    pinger_reconfig(telnet->pinger, &telnet->cfg, cfg);
-    telnet->cfg = *cfg;		       /* STRUCTURE COPY */
-}
-
-/*
- * Called to send data down the Telnet connection.
- */
-static int telnet_send(void *handle, char *buf, int len)
-{
-    Telnet telnet = (Telnet) handle;
-    unsigned char *p, *end;
-    static const unsigned char iac[2] = { IAC, IAC };
-    static const unsigned char cr[2] = { CR, NUL };
-#if 0
-    static const unsigned char nl[2] = { CR, LF };
-#endif
-
-    if (telnet->s == NULL)
-	return 0;
-
-    p = (unsigned char *)buf;
-    end = (unsigned char *)(buf + len);
-    while (p < end) {
-	unsigned char *q = p;
-
-	while (p < end && iswritable(*p))
-	    p++;
-	telnet->bufsize = sk_write(telnet->s, (char *)q, p - q);
-
-	while (p < end && !iswritable(*p)) {
-	    telnet->bufsize = 
-		sk_write(telnet->s, (char *)(*p == IAC ? iac : cr), 2);
-	    p++;
-	}
-    }
-
-    return telnet->bufsize;
-}
-
-/*
- * Called to query the current socket sendability status.
- */
-static int telnet_sendbuffer(void *handle)
-{
-    Telnet telnet = (Telnet) handle;
-    return telnet->bufsize;
-}
-
-/*
- * Called to set the size of the window from Telnet's POV.
- */
-static void telnet_size(void *handle, int width, int height)
-{
-    Telnet telnet = (Telnet) handle;
-    unsigned char b[24];
-    int n;
-    char *logbuf;
-
-    telnet->term_width = width;
-    telnet->term_height = height;
-
-    if (telnet->s == NULL || telnet->opt_states[o_naws.index] != ACTIVE)
-	return;
-    n = 0;
-    b[n++] = IAC;
-    b[n++] = SB;
-    b[n++] = TELOPT_NAWS;
-    b[n++] = telnet->term_width >> 8;
-    if (b[n-1] == IAC) b[n++] = IAC;   /* duplicate any IAC byte occurs */
-    b[n++] = telnet->term_width & 0xFF;
-    if (b[n-1] == IAC) b[n++] = IAC;   /* duplicate any IAC byte occurs */
-    b[n++] = telnet->term_height >> 8;
-    if (b[n-1] == IAC) b[n++] = IAC;   /* duplicate any IAC byte occurs */
-    b[n++] = telnet->term_height & 0xFF;
-    if (b[n-1] == IAC) b[n++] = IAC;   /* duplicate any IAC byte occurs */
-    b[n++] = IAC;
-    b[n++] = SE;
-    telnet->bufsize = sk_write(telnet->s, (char *)b, n);
-    logbuf = dupprintf("client:\tSB NAWS %d,%d",
-		       telnet->term_width, telnet->term_height);
-    logevent(telnet->frontend, logbuf);
-    sfree(logbuf);
-}
-
-static int telnet_connected(void *handle)
-{
-    Telnet telnet = (Telnet) handle;
-    return telnet->s != NULL;
-}
-
-static int telnet_sendok(void *handle)
-{
-    /* Telnet telnet = (Telnet) handle; */
-    return 1;
-}
-
-static void telnet_unthrottle(void *handle, int backlog)
-{
-    Telnet telnet = (Telnet) handle;
-    sk_set_frozen(telnet->s, backlog > TELNET_MAX_BACKLOG);
-}
-
-static int telnet_ldisc(void *handle, int option)
-{
-    Telnet telnet = (Telnet) handle;
-    if (option == LD_ECHO)
-	return telnet->echoing;
-    if (option == LD_EDIT)
-	return telnet->editing;
-    return FALSE;
-}
-
-static void telnet_provide_ldisc(void *handle, void *ldisc)
-{
-    Telnet telnet = (Telnet) handle;
-    telnet->ldisc = ldisc;
-}
-
-static void telnet_provide_logctx(void *handle, void *logctx)
-{
-    /* This is a stub. */
-}
-
-static int telnet_exitcode(void *handle)
-{
-    Telnet telnet = (Telnet) handle;
-    if (telnet->s != NULL)
-        return -1;                     /* still connected */
-    else
-        /* Telnet doesn't transmit exit codes back to the client */
-        return 0;
-}
-
-/*
- * cfg_info for Telnet does nothing at all.
- */
-static int telnet_cfg_info(void *handle)
-{
-    return 0;
-}
-
-Backend telnet_backend = {
-    telnet_init,
-    telnet_free,
-    telnet_reconfig,
-    telnet_send,
-    telnet_sendbuffer,
-    telnet_size,
-    telnet_special,
-    telnet_get_specials,
-    telnet_connected,
-    telnet_exitcode,
-    telnet_sendok,
-    telnet_ldisc,
-    telnet_provide_ldisc,
-    telnet_provide_logctx,
-    telnet_unthrottle,
-    telnet_cfg_info,
-    "telnet",
-    PROT_TELNET,
-    23
-};
-
-# `END_ORIGINAL
-# ===============================================
-subcode: send_opt(n_cmd, n_opt)
-    $local pc_buf[100]
-    pc_buf[0]=IAC
-    pc_buf[1]=n_cmd
-    pc_buf[2]=n_opt
-    telnet->bufsize = sk_write(telnet->s, (char *) pc_buf, 3)
-
+# ====================================================
 # ===============================================
 subcode: telnet_structs
     #define iswritable(x) \
@@ -739,8 +439,6 @@ subcode: telnet_structs
 	}
     #undef telnet_str
     }
-
-    static void telnet_size(void *handle, int width, int height);
 
     $(set:OPTLIST=NAWS,TSPEED,TTYPE,OENV,NENV,ECHO,WE_SGA,THEY_SGA,WE_BIN,THEY_BIN)
 
@@ -799,7 +497,7 @@ subcode: telnet_structs
 	const struct plug_function_table *fn;
 	/* the above field _must_ be first in the structure */
 
-	Socket s;
+	SOCKET s;
 
 	void *frontend;
 	void *ldisc;
@@ -842,62 +540,6 @@ subcode: telnet_defines
     #define ABORT   238		       /* Abort process */
     #define SUSP    237		       /* Suspend process */
     #define xEOF    236		       /* End of file: EOF is already used... */
-
-    #define TELOPTS(X) \
-	X(BINARY, 0)                       /* 8-bit data path */ \
-	X(ECHO, 1)                         /* echo */ \
-	X(RCP, 2)                          /* prepare to reconnect */ \
-	X(SGA, 3)                          /* suppress go ahead */ \
-	X(NAMS, 4)                         /* approximate message size */ \
-	X(STATUS, 5)                       /* give status */ \
-	X(TM, 6)                           /* timing mark */ \
-	X(RCTE, 7)                         /* remote controlled transmission and echo */ \
-	X(NAOL, 8)                         /* negotiate about output line width */ \
-	X(NAOP, 9)                         /* negotiate about output page size */ \
-	X(NAOCRD, 10)                      /* negotiate about CR disposition */ \
-	X(NAOHTS, 11)                      /* negotiate about horizontal tabstops */ \
-	X(NAOHTD, 12)                      /* negotiate about horizontal tab disposition */ \
-	X(NAOFFD, 13)                      /* negotiate about formfeed disposition */ \
-	X(NAOVTS, 14)                      /* negotiate about vertical tab stops */ \
-	X(NAOVTD, 15)                      /* negotiate about vertical tab disposition */ \
-	X(NAOLFD, 16)                      /* negotiate about output LF disposition */ \
-	X(XASCII, 17)                      /* extended ascic character set */ \
-	X(LOGOUT, 18)                      /* force logout */ \
-	X(BM, 19)                          /* byte macro */ \
-	X(DET, 20)                         /* data entry terminal */ \
-	X(SUPDUP, 21)                      /* supdup protocol */ \
-	X(SUPDUPOUTPUT, 22)                /* supdup output */ \
-	X(SNDLOC, 23)                      /* send location */ \
-	X(TTYPE, 24)                       /* terminal type */ \
-	X(EOR, 25)                         /* end or record */ \
-	X(TUID, 26)                        /* TACACS user identification */ \
-	X(OUTMRK, 27)                      /* output marking */ \
-	X(TTYLOC, 28)                      /* terminal location number */ \
-	X(3270REGIME, 29)                  /* 3270 regime */ \
-	X(X3PAD, 30)                       /* X.3 PAD */ \
-	X(NAWS, 31)                        /* window size */ \
-	X(TSPEED, 32)                      /* terminal speed */ \
-	X(LFLOW, 33)                       /* remote flow control */ \
-	X(LINEMODE, 34)                    /* Linemode option */ \
-	X(XDISPLOC, 35)                    /* X Display Location */ \
-	X(OLD_ENVIRON, 36)                 /* Old - Environment variables */ \
-	X(AUTHENTICATION, 37)              /* Authenticate */ \
-	X(ENCRYPT, 38)                     /* Encryption option */ \
-	X(NEW_ENVIRON, 39)                 /* New - Environment variables */ \
-	X(TN3270E, 40)                     /* TN3270 enhancements */ \
-	X(XAUTH, 41)                       \
-	X(CHARSET, 42)                     /* Character set */ \
-	X(RSP, 43)                         /* Remote serial port */ \
-	X(COM_PORT_OPTION, 44)             /* Com port control */ \
-	X(SLE, 45)                         /* Suppress local echo */ \
-	X(STARTTLS, 46)                    /* Start TLS */ \
-	X(KERMIT, 47)                      /* Automatic Kermit file transfer */ \
-	X(SEND_URL, 48)                    \
-	X(FORWARD_X, 49)                   \
-	X(PRAGMA_LOGON, 138)               \
-	X(SSPI_LOGON, 139)                 \
-	X(PRAGMA_HEARTBEAT, 140)           \
-	X(EXOPL, 255)                      /* extended-options-list */
 
     #define telnet_enum(x,y) TELOPT_##x = y,
     enum { TELOPTS(telnet_enum) dummy=0 };
@@ -1035,4 +677,73 @@ static const struct telnet_special *telnet_get_specials(void *handle)
     };
     return specials;
 }
+
+# =========================================================
+subcode:: global
+    $define(IAC) 255
+    $define(DONT) 254
+    $define(DO) 253
+    $define(WONT) 252
+    $define(WILL) 251
+    $define(SB) 250
+
+    $define(SE) 240
+
+    $define(NUL) 0
+    $define(CR) 13
+
+    $define(TELOPT_BINARY) 0
+    $define(TELOPT_ECHO) 1
+    $define(TELOPT_RCP) 2
+    $define(TELOPT_SGA) 3
+    $define(TELOPT_NAMS) 4
+    $define(TELOPT_STATUS) 5
+    $define(TELOPT_TM) 6
+    $define(TELOPT_RCTE) 7
+    $define(TELOPT_NAOL) 8
+    $define(TELOPT_NAOP) 9
+    $define(TELOPT_NAOCRD) 10
+    $define(TELOPT_NAOHTS) 11
+    $define(TELOPT_NAOHTD) 12
+    $define(TELOPT_NAOFFD) 13
+    $define(TELOPT_NAOVTS) 14
+    $define(TELOPT_NAOVTD) 15
+    $define(TELOPT_NAOLFD) 16
+    $define(TELOPT_XASCII) 17
+    $define(TELOPT_LOGOUT) 18
+    $define(TELOPT_BM) 19
+    $define(TELOPT_DET) 20
+    $define(TELOPT_SUPDUP) 21
+    $define(TELOPT_SUPDUPOUTPUT) 22
+    $define(TELOPT_SNDLOC) 23
+    $define(TELOPT_TTYPE) 24
+    $define(TELOPT_EOR) 25
+    $define(TELOPT_TUID) 26
+    $define(TELOPT_OUTMRK) 27
+    $define(TELOPT_TTYLOC) 28
+    $define(TELOPT_3270REGIME) 29
+    $define(TELOPT_X3PAD) 30
+    $define(TELOPT_NAWS) 31
+    $define(TELOPT_TSPEED) 32
+    $define(TELOPT_LFLOW) 33
+    $define(TELOPT_LINEMODE) 34
+    $define(TELOPT_XDISPLOC) 35
+    $define(TELOPT_OLD_ENVIRON) 36
+    $define(TELOPT_AUTHENTICATION) 37
+    $define(TELOPT_ENCRYPT) 38
+    $define(TELOPT_NEW_ENVIRON) 39
+    $define(TELOPT_TN3270E) 40
+    $define(TELOPT_XAUTH) 41
+    $define(TELOPT_CHARSET) 42
+    $define(TELOPT_RSP) 43
+    $define(TELOPT_COM_PORT_OPTION) 44
+    $define(TELOPT_SLE) 45
+    $define(TELOPT_STARTTLS) 46
+    $define(TELOPT_KERMIT) 47
+    $define(TELOPT_SEND_URL) 48
+    $define(TELOPT_FORWARD_X) 49
+    $define(TELOPT_PRAGMA_LOGON) 138
+    $define(TELOPT_SSPI_LOGON) 139
+    $define(TELOPT_PRAGMA_HEARTBEAT) 140
+    $define(TELOPT_EXOPL) 255
 

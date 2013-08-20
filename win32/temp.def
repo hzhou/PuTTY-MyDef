@@ -32,30 +32,6 @@ subcode: win_loop
 
 	$call win_loop_pending_netevent
 
-subcode:: function_list
-    $list do_select
-
-/* * Set up, or shut down, an AsyncSelect. Called from winnet.c.  */
-fncode: do_select(SOCKET skt, tb_startup)
-    $return_type char *
-    $if !hwnd
-	return "do_select(): internal error (hwnd==NULL)";
-
-    $if tb_startup
-	$define(WM_NETEVENT) WM_APP+5
-	tn_msg = WM_NETEVENT;
-	tn_events = (FD_CONNECT | FD_READ | FD_WRITE | FD_OOB | FD_CLOSE | FD_ACCEPT);
-    $else
-	tn_msg = 0
-	tn_events = 0;
-
-    $if p_WSAAsyncSelect(skt, hwnd, tn_msg, tn_events) == SOCKET_ERROR
-	$if p_WSAGetLastError()
-	    return "Network is down";
-	$else
-	    return "WSAAsyncSelect(): unknown error";
-    return NULL;
-
 #----------------------------------------------------
 fncode: agent_schedule_callback(FnAgentSchedule callback, void *callback_ctx, void *data, int len)
     $typedef void(* FnAgentSchedule)(void *, void *, int)

@@ -1,6 +1,8 @@
 include: win32/size.def
 include: win32/color.def
 
+include: win32/winsock.def
+
 fncode: WinMain
     $call debug_on
     $call @WinMain_Init
@@ -10,7 +12,6 @@ fncode: WinMain
 
     $call init_win_size
 
-    $global hwnd_main
     tn_ws= WS_OVERLAPPEDWINDOW 
     tn_wsex = 0
     $call @on_window_style
@@ -22,11 +23,14 @@ fncode: WinMain
     init_fonts(0,0)
     $call adjust_win_size
 
+    print "WinMain_PreShow\n"
     $call @WinMain_PreShow
+    print "ShowWindow\n"
     ShowWindow(hwnd_main, n_cmdshow);
     $call @init_focus
     UpdateWindow(hwnd_main);
 
+    print "WinMain_PreLoop\n"
     $call @WinMain_PreLoop
     $call win_loop
 
@@ -36,8 +40,7 @@ fncode: WinMain
 # --------------------------------------------------
 subcode:: WinMain_Init
     $call init_config
-    #$call init_console
-    #$call winsock_init
+    $call winsock_init
 
 subcode:: win_init
     $call win_get_config, "rows", n_rows, 25
@@ -45,10 +48,13 @@ subcode:: win_init
     $call init_colors
 
 subcode:: WinMain_PreShow
+    print "init_terminal\n"
     $call init_terminal
     #$call init_size
 
+    print "start_backend\n"
     $call start_backend
+    print "line_discipline_init\n"
     $call @line_discipline_init
 
     # set state
@@ -58,21 +64,15 @@ subcode:: WinMain_PreShow
 subcode:: WinMain_PreLoop
 
 subcode:: WinMain_CleanUp
-    #$call cleanup_exit
-# --------------------------------------------------
-
-subcode: cleanup_exit
-    $call @WinMain_CleanUp
      # Clean up.
     deinit_fonts();
-    #$call winsock_cleanup
+    $call winsock_cleanup
     #$call ssh_cleanup
 
     exit(0);
 
-subcode: winsock_cleanup
-    sk_cleanup();
-
+# ----
+# ----
 subcode: ssh_cleanup
     random_save_seed();
     $(if:MSCRYPTOAPI)
@@ -87,13 +87,17 @@ subcode: init_terminal
 
 subcode: start_backend
     $global struct backend * back
-    back=backend_create_loop()
+    $declare struct backend * backend_create_telnet()
+    print "backend_create_telnet\n"
+    back=backend_create_telnet()
     $call assert, back
+    print "back->init\n"
     ts_err = back->init(back)
     $if ts_err
 	$local ts_msg_buf[1024]
 	snprintf(ts_msg_buf, 1024, "Unable to open connection:\n%s", ts_err)
 	MessageBox(NULL, ts_msg_buf, "$(appname) Error", MB_ICONERROR|MB_OK)
+    print "back->size\n"
     # back->size(back, n_rows, n_cols)
 
 # ===============================================================

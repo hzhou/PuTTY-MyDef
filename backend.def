@@ -21,7 +21,7 @@ subcode: api_declare(name, @list)
     $struct($(name)) void * data, name, $(list)
 
 subcode: api_create(name, parent)
-    $struct($(parent)_$(name)) int rows, int cols
+    $struct($(parent)_$(name)) n_rows, n_cols
 
     $function $(parent)_create_$(name) 
 	$return_type struct $(parent) *
@@ -34,8 +34,8 @@ subcode: api_create(name, parent)
 	    $local struct $(parent)_$(name) * this
 	    $allocate this
 	    $if this
-		this->rows=0
-		this->cols=0
+		this->n_rows=0
+		this->n_cols=0
 		p->data=this
 	    $else
 		free(p)
@@ -48,10 +48,17 @@ subcode: api_create(name, parent)
     $(for:api in $($(parent)_api))
 	$function $(name)_$(api), api
 	    $local struct $(parent)_$(name) * this
-	    this=(struct $(parent)_$(name) *)((struct $(parent) *)handle)->data
+	    $(if:api=init)
+		$allocate this
+		memset(this, 0, sizeof(this))
+		((struct $(parent) *)handle)->data=this
+	    $(else)
+		this=(struct $(parent)_$(name) *)((struct $(parent) *)handle)->data
 	    $call @$(name)_$(api)
 	    $(if:notfound=1)
 		$call @$(parent)_$(api)
+	    $(if:api=init)
+		return NULL
 
 # ----------------------------------------
 subcode: backend_init
@@ -65,8 +72,8 @@ subcode: backend_free
     free(handle)
 
 subcode: backend_size
-    this->rows=tn_rows
-    this->cols=tn_cols
+    this->n_rows=tn_rows
+    this->n_cols=tn_cols
 
 subcode: loop_send
     return from_backend(ts_buf, tn_len)

@@ -60,9 +60,6 @@ subcode: term_schedule_update
 	schedule_timer(UPDATE_DELAY, term_update_on_timer, term)
 
 # ------------------
-subcode:: function_list
-    $list term_seen_key_event
-
 subcode:: on_term_init
     $map term_decl, b_seen_disp_event
     $.b_seen_disp_event=0

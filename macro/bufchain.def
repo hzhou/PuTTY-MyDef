@@ -42,6 +42,7 @@ subcode: bufchain_char_loop(inbuf, c)
     $local s
     $local n_localbuf=0
     $local s_localbuf[256]
+    s=s_localbuf
     $while 1
 	$if tn_unget !=-1
 	    $(c)=tn_unget

@@ -1,4 +1,5 @@
-include: cfg.def
+include: autoload.def
+
 include: macro/attr.def
 
 include: win32/main.def
@@ -32,7 +33,6 @@ page: main
     autoload: h
     subcode: main
 	$(set:appname=PuTTY-MyDef)
-	$define(snprintf) sprintf_s
 	$declare TERM term_init()
 	$declare TERM term_free(TERM)
 	$declare int term_data(TERM, char *, int)
@@ -63,6 +63,7 @@ subcode:: global
     $list linedisc_send
 
 fncode: linedisc_send(s_buf, n_len)
+    #print linedisc_send [$n_len]
     $if !back
 	return
     $if n_len>0
