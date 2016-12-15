@@ -1,0 +1,15 @@
+subcode:: WinMain_Init
+    $print "WinMain_Init\n"
+
+subcode:: WinMain_PreShow
+    $print "WinMain_PreShow\n"
+
+subcode:: WinMain_PreUpdate
+    $print "WinMain_PreUpdate\n"
+
+subcode:: WinMain_PreLoop
+    $print "WinMain_PreLoop\n"
+
+subcode:: WinMain_CleanUp
+    $print "WinMain_CleanUp\n"
+

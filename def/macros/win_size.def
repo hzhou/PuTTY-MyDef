@@ -1,0 +1,62 @@
+subcode:: WinMain_Init
+    $global n_cols=80, n_rows=25
+    $global int font_height=20, int font_width=10
+    $global int extra_width=25, int extra_height=28
+
+    # extra_width measures from window edge
+    # offset_width measures from client edge
+    $call get_config, "window_border", tn_border, 40
+    $global int offset_width, int offset_height
+    offset_width = tn_border
+    offset_height = tn_border
+
+subcode:: WinMain_PreShow
+    $local RECT rct_cr
+    $local RECT rct_wr
+    GetWindowRect(hwnd_main, &rct_wr);
+    GetClientRect(hwnd_main, &rct_cr);
+    $(set:w=($1.right-$1.left))
+    $(set:h=($1.bottom-$1.top))
+    extra_width  = $(w:rct_wr) - $(w:rct_cr) + offset_width*2
+    extra_height = $(h:rct_wr) - $(h:rct_cr) + offset_height*2
+
+    $call calc_win_size
+
+    tn_ret=SetWindowPos(hwnd_main, NULL, 0, 0, n_win_width, n_win_height, SWP_NOMOVE | SWP_NOREDRAW | SWP_NOZORDER)
+
+    subcode: calc_win_size
+        $global n_win_width, n_win_height
+        n_win_width = extra_width + font_width * n_cols
+        n_win_height = extra_height + font_height * n_rows
+
+#---------------------------------------- 
+subcode: calc_col_size(w, h, c, r)
+    # w, h are client area size
+    $(c) = ($(w)-offset_width*2 + font_width / 2) / font_width
+    $(r) = ($(h)-offset_height*2 + font_height / 2) / font_height
+    $if $(c)<1
+	$(c)=1
+    $if $(r)<1
+	$(r)=1
+# --------------------------------------------
+subcode: rect_to_charpos(rct, l, r, t, b)
+    $(l)=($(rct).left-offset_width)/font_width
+    $(r)=($(rct).right-offset_width-1)/font_width
+    $(t)=($(rct).top-offset_height)/font_height
+    $(b)=($(rct).bottom-offset_height-1)/font_height
+
+#---------------------------------------- 
+subcode: main_on_WM_SIZE
+    $global b_win_minimized = 0
+    $if wparam == SIZE_MINIMIZED
+	b_win_minimized = 1
+    $else
+	b_win_minimized = 0
+
+    tn_w = LOWORD(lparam)
+    tn_h = HIWORD(lparam)
+    $call calc_col_size, tn_w, tn_h, n_cols, n_rows
+    $call @term_resize
+
+    InvalidateRect(hwnd, NULL, TRUE)
+

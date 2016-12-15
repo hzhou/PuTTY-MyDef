@@ -1,0 +1,250 @@
+include: win32/socket.def
+
+subcode:: _autoload
+    $global SOCKET socket_debug=0
+    $global s_debug_buffer[1024]
+    $print usesub:socket_print
+
+subcode: assert_action
+    $call msgbox, "Assert Error: $(check) @ %s:line %d", __FILE__, __LINE__
+    exit(0)
+
+subcode: socket_print(@msg)
+    $if socket_debug
+	tn_temp_len=snprintf(s_debug_buffer, 1024, $(msg))
+	tn_temp_len=send(socket_debug, s_debug_buffer, tn_temp_len, 0)
+	$if tn_temp_len==SOCKET_ERROR
+	    printf "SOCKET ERROR: %d\n", WSAGetLastError()
+	    socket_debug=0
+
+#---------------------------------------- 
+subcode:: WinMain_Init
+    $call winsock_init
+    $call socket_connect, "192.168.2.11", 1300
+    $if tn_ret
+	socket_debug=tn_socket
+	$print "START\n"
+
+#---------------------------------------- 
+subcode: debug_on_console
+    AllocConsole()
+    freopen("conout$", "w", stdout)
+
+#---------------------------------------- 
+subcode: debug_NETEVENT
+    $(set:val=tn_event)
+    $map case_dump, FD_CONNECT, FD_READ, FD_WRITE, FD_OOB, FD_CONNECT, FD_ACCEPT
+    subcode: case_dump(name)
+        $case $(val) == $(name)
+            $print $(val): $(name) ($$(val))
+
+subcode: dump_msg
+    $local static t_last_msg=0
+    $if msg==t_last_msg
+	printf(".");
+    $else
+	$switch(msg)
+	    case 0x00: printf("WM_NULL\n"); break;
+	    case 0x01: printf("WM_CREATE\n"); break;
+	    case 0x02: printf("WM_DESTROY\n"); break;
+	    case 0x03: printf("WM_MOVE\n"); break;
+	    case 0x05: printf("WM_SIZE\n"); break;
+	    case 0x06: printf("WM_ACTIVATE\n"); break;
+	    case 0x07: printf("WM_SETFOCUS\n"); break;
+	    case 0x08: printf("WM_KILLFOCUS\n"); break;
+	    case 0x0A: printf("WM_ENABLE\n"); break;
+	    case 0x0B: printf("WM_SETREDRAW\n"); break;
+	    case 0x0C: printf("WM_SETTEXT\n"); break;
+	    case 0x0D: printf("WM_GETTEXT\n"); break;
+	    case 0x0E: printf("WM_GETTEXTLENGTH\n"); break;
+	    case 0x0F: printf("WM_PAINT\n"); break;
+	    case 0x10: printf("WM_CLOSE\n"); break;
+	    case 0x11: printf("WM_QUERYENDSESSION\n"); break;
+	    case 0x12: printf("WM_QUIT\n"); break;
+	    case 0x13: printf("WM_QUERYOPEN\n"); break;
+	    case 0x14: printf("WM_ERASEBKGND\n"); break;
+	    case 0x15: printf("WM_SYSCOLORCHANGE\n"); break;
+	    case 0x16: printf("WM_ENDSESSION\n"); break;
+	    case 0x17: printf("WM_SYSTEMERROR\n"); break;
+	    case 0x18: printf("WM_SHOWWINDOW\n"); break;
+	    case 0x19: printf("WM_CTLCOLOR\n"); break;
+	    case 0x1A: printf("WM_WININICHANGE|WM_SETTINGCHANGE\n"); break;
+	    case 0x1B: printf("WM_DEVMODECHANGE\n"); break;
+	    case 0x1C: printf("WM_ACTIVATEAPP\n"); break;
+	    case 0x1D: printf("WM_FONTCHANGE\n"); break;
+	    case 0x1E: printf("WM_TIMECHANGE\n"); break;
+	    case 0x1F: printf("WM_CANCELMODE\n"); break;
+	    # case 0x20: printf("WM_SETCURSOR\n"); break;
+	    case 0x21: printf("WM_MOUSEACTIVATE\n"); break;
+	    case 0x22: printf("WM_CHILDACTIVATE\n"); break;
+	    case 0x23: printf("WM_QUEUESYNC\n"); break;
+	    case 0x24: printf("WM_GETMINMAXINFO\n"); break;
+	    case 0x26: printf("WM_PAINTICON\n"); break;
+	    case 0x27: printf("WM_ICONERASEBKGND\n"); break;
+	    case 0x28: printf("WM_NEXTDLGCTL\n"); break;
+	    case 0x2A: printf("WM_SPOOLERSTATUS\n"); break;
+	    case 0x2B: printf("WM_DRAWITEM\n"); break;
+	    case 0x2C: printf("WM_MEASUREITEM\n"); break;
+	    case 0x2D: printf("WM_DELETEITEM\n"); break;
+	    case 0x2E: printf("WM_VKEYTOITEM\n"); break;
+	    case 0x2F: printf("WM_CHARTOITEM\n"); break;
+	    case 0x30: printf("WM_SETFONT\n"); break;
+	    case 0x31: printf("WM_GETFONT\n"); break;
+	    case 0x32: printf("WM_SETHOTKEY\n"); break;
+	    case 0x33: printf("WM_GETHOTKEY\n"); break;
+	    case 0x37: printf("WM_QUERYDRAGICON\n"); break;
+	    case 0x39: printf("WM_COMPAREITEM\n"); break;
+	    case 0x41: printf("WM_COMPACTING\n"); break;
+	    case 0x46: printf("WM_WINDOWPOSCHANGING\n"); break;
+	    case 0x47: printf("WM_WINDOWPOSCHANGED\n"); break;
+	    case 0x48: printf("WM_POWER\n"); break;
+	    case 0x4A: printf("WM_COPYDATA\n"); break;
+	    case 0x4B: printf("WM_CANCELJOURNAL\n"); break;
+	    case 0x4E: printf("WM_NOTIFY\n"); break;
+	    case 0x50: printf("WM_INPUTLANGCHANGEREQUEST\n"); break;
+	    case 0x51: printf("WM_INPUTLANGCHANGE\n"); break;
+	    case 0x52: printf("WM_TCARD\n"); break;
+	    case 0x53: printf("WM_HELP\n"); break;
+	    case 0x54: printf("WM_USERCHANGED\n"); break;
+	    case 0x55: printf("WM_NOTIFYFORMAT\n"); break;
+	    case 0x7B: printf("WM_CONTEXTMENU\n"); break;
+	    case 0x7C: printf("WM_STYLECHANGING\n"); break;
+	    case 0x7D: printf("WM_STYLECHANGED\n"); break;
+	    case 0x7E: printf("WM_DISPLAYCHANGE\n"); break;
+	    # case 0x7F: printf("WM_GETICON\n"); break;
+	    case 0x80: printf("WM_SETICON\n"); break;
+	    case 0x81: printf("WM_NCCREATE\n"); break;
+	    case 0x82: printf("WM_NCDESTROY\n"); break;
+	    case 0x83: printf("WM_NCCALCSIZE\n"); break;
+	    # case 0x84: printf("WM_NCHITTEST\n"); break;
+	    case 0x85: printf("WM_NCPAINT\n"); break;
+	    case 0x86: printf("WM_NCACTIVATE\n"); break;
+	    case 0x87: printf("WM_GETDLGCODE\n"); break;
+	    # case 0xA0: printf("WM_NCMOUSEMOVE\n"); break;
+	    case 0xA1: printf("WM_NCLBUTTONDOWN\n"); break;
+	    case 0xA2: printf("WM_NCLBUTTONUP\n"); break;
+	    case 0xA3: printf("WM_NCLBUTTONDBLCLK\n"); break;
+	    case 0xA4: printf("WM_NCRBUTTONDOWN\n"); break;
+	    case 0xA5: printf("WM_NCRBUTTONUP\n"); break;
+	    case 0xA6: printf("WM_NCRBUTTONDBLCLK\n"); break;
+	    case 0xA7: printf("WM_NCMBUTTONDOWN\n"); break;
+	    case 0xA8: printf("WM_NCMBUTTONUP\n"); break;
+	    case 0xA9: printf("WM_NCMBUTTONDBLCLK\n"); break;
+	    case 0x100: printf("WM_KEYDOWN|WM_KEYFIRST\n"); break;
+	    case 0x101: printf("WM_KEYUP\n"); break;
+	    case 0x102: printf("WM_CHAR\n"); break;
+	    case 0x103: printf("WM_DEADCHAR\n"); break;
+	    case 0x104: printf("WM_SYSKEYDOWN\n"); break;
+	    case 0x105: printf("WM_SYSKEYUP\n"); break;
+	    case 0x106: printf("WM_SYSCHAR\n"); break;
+	    case 0x107: printf("WM_SYSDEADCHAR\n"); break;
+	    case 0x108: printf("WM_KEYLAST\n"); break;
+	    case 0x10D: printf("WM_IME_STARTCOMPOSITION\n"); break;
+	    case 0x10E: printf("WM_IME_ENDCOMPOSITION\n"); break;
+	    case 0x10F: printf("WM_IME_COMPOSITION|WM_IME_KEYLAST\n"); break;
+	    case 0x110: printf("WM_INITDIALOG\n"); break;
+	    case 0x111: printf("WM_COMMAND\n"); break;
+	    case 0x112: 
+		printf("WM_SYSCOMMAND - 0x%4X\n", wparam); 
+		break;
+	    case 0x113: printf("WM_TIMER\n"); break;
+	    case 0x114: printf("WM_HSCROLL\n"); break;
+	    case 0x115: printf("WM_VSCROLL\n"); break;
+	    case 0x116: printf("WM_INITMENU\n"); break;
+	    case 0x117: printf("WM_INITMENUPOPUP\n"); break;
+	    case 0x11F: printf("WM_MENUSELECT\n"); break;
+	    case 0x120: printf("WM_MENUCHAR\n"); break;
+	    # case 0x121: printf("WM_ENTERIDLE\n"); break;
+	    case 0x132: printf("WM_CTLCOLORMSGBOX\n"); break;
+	    case 0x133: printf("WM_CTLCOLOREDIT\n"); break;
+	    case 0x134: printf("WM_CTLCOLORLISTBOX\n"); break;
+	    case 0x135: printf("WM_CTLCOLORBTN\n"); break;
+	    case 0x136: printf("WM_CTLCOLORDLG\n"); break;
+	    case 0x137: printf("WM_CTLCOLORSCROLLBAR\n"); break;
+	    case 0x138: printf("WM_CTLCOLORSTATIC\n"); break;
+	    # case 0x200: printf("WM_MOUSEMOVE|WM_MOUSEFIRST\n"); break;
+	    case 0x201: printf("WM_LBUTTONDOWN\n"); break;
+	    case 0x202: printf("WM_LBUTTONUP\n"); break;
+	    case 0x203: printf("WM_LBUTTONDBLCLK\n"); break;
+	    case 0x204: printf("WM_RBUTTONDOWN\n"); break;
+	    case 0x205: printf("WM_RBUTTONUP\n"); break;
+	    case 0x206: printf("WM_RBUTTONDBLCLK\n"); break;
+	    case 0x207: printf("WM_MBUTTONDOWN\n"); break;
+	    case 0x208: printf("WM_MBUTTONUP\n"); break;
+	    case 0x209: printf("WM_MBUTTONDBLCLK\n"); break;
+	    case 0x20A: printf("WM_MOUSEWHEEL\n"); break;
+	    case 0x20E: printf("WM_MOUSEHWHEEL\n"); break;
+	    case 0x210: printf("WM_PARENTNOTIFY\n"); break;
+	    case 0x211: printf("WM_ENTERMENULOOP\n"); break;
+	    case 0x212: printf("WM_EXITMENULOOP\n"); break;
+	    case 0x213: printf("WM_NEXTMENU\n"); break;
+	    case 0x214: printf("WM_SIZING\n"); break;
+	    case 0x215: printf("WM_CAPTURECHANGED\n"); break;
+	    case 0x216: printf("WM_MOVING\n"); break;
+	    case 0x218: printf("WM_POWERBROADCAST\n"); break;
+	    case 0x219: printf("WM_DEVICECHANGE\n"); break;
+	    case 0x220: printf("WM_MDICREATE\n"); break;
+	    case 0x221: printf("WM_MDIDESTROY\n"); break;
+	    case 0x222: printf("WM_MDIACTIVATE\n"); break;
+	    case 0x223: printf("WM_MDIRESTORE\n"); break;
+	    case 0x224: printf("WM_MDINEXT\n"); break;
+	    case 0x225: printf("WM_MDIMAXIMIZE\n"); break;
+	    case 0x226: printf("WM_MDITILE\n"); break;
+	    case 0x227: printf("WM_MDICASCADE\n"); break;
+	    case 0x228: printf("WM_MDIICONARRANGE\n"); break;
+	    case 0x229: printf("WM_MDIGETACTIVE\n"); break;
+	    case 0x230: printf("WM_MDISETMENU\n"); break;
+	    case 0x231: printf("WM_ENTERSIZEMOVE\n"); break;
+	    case 0x232: printf("WM_EXITSIZEMOVE\n"); break;
+	    case 0x233: printf("WM_DROPFILES\n"); break;
+	    case 0x234: printf("WM_MDIREFRESHMENU\n"); break;
+	    case 0x281: printf("WM_IME_SETCONTEXT\n"); break;
+	    case 0x282: printf("WM_IME_NOTIFY\n"); break;
+	    case 0x283: printf("WM_IME_CONTROL\n"); break;
+	    case 0x284: printf("WM_IME_COMPOSITIONFULL\n"); break;
+	    case 0x285: printf("WM_IME_SELECT\n"); break;
+	    case 0x286: printf("WM_IME_CHAR\n"); break;
+	    case 0x290: printf("WM_IME_KEYDOWN\n"); break;
+	    case 0x291: printf("WM_IME_KEYUP\n"); break;
+	    case 0x2A1: printf("WM_MOUSEHOVER\n"); break;
+	    case 0x2A2: printf("WM_NCMOUSELEAVE\n"); break;
+	    case 0x2A3: printf("WM_MOUSELEAVE\n"); break;
+	    case 0x300: printf("WM_CUT\n"); break;
+	    case 0x301: printf("WM_COPY\n"); break;
+	    case 0x302: printf("WM_PASTE\n"); break;
+	    case 0x303: printf("WM_CLEAR\n"); break;
+	    case 0x304: printf("WM_UNDO\n"); break;
+	    case 0x305: printf("WM_RENDERFORMAT\n"); break;
+	    case 0x306: printf("WM_RENDERALLFORMATS\n"); break;
+	    case 0x307: printf("WM_DESTROYCLIPBOARD\n"); break;
+	    case 0x308: printf("WM_DRAWCLIPBOARD\n"); break;
+	    case 0x309: printf("WM_PAINTCLIPBOARD\n"); break;
+	    case 0x30A: printf("WM_VSCROLLCLIPBOARD\n"); break;
+	    case 0x30B: printf("WM_SIZECLIPBOARD\n"); break;
+	    case 0x30C: printf("WM_ASKCBFORMATNAME\n"); break;
+	    case 0x30D: printf("WM_CHANGECBCHAIN\n"); break;
+	    case 0x30E: printf("WM_HSCROLLCLIPBOARD\n"); break;
+	    case 0x30F: printf("WM_QUERYNEWPALETTE\n"); break;
+	    case 0x310: printf("WM_PALETTEISCHANGING\n"); break;
+	    case 0x311: printf("WM_PALETTECHANGED\n"); break;
+	    case 0x312: printf("WM_HOTKEY\n"); break;
+	    case 0x317: printf("WM_PRINT\n"); break;
+	    case 0x318: printf("WM_PRINTCLIENT\n"); break;
+	    case 0x358: printf("WM_HANDHELDFIRST\n"); break;
+	    case 0x35F: printf("WM_HANDHELDLAST\n"); break;
+	    case 0x380: printf("WM_PENWINFIRST\n"); break;
+	    case 0x38F: printf("WM_PENWINLAST\n"); break;
+	    case 0x390: printf("WM_COALESCE_FIRST\n"); break;
+	    case 0x39F: printf("WM_COALESCE_LAST\n"); break;
+	    case 0x3E0: printf("WM_DDE_INITIATE|WM_DDE_FIRST\n"); break;
+	    case 0x3E1: printf("WM_DDE_TERMINATE\n"); break;
+	    case 0x3E2: printf("WM_DDE_ADVISE\n"); break;
+	    case 0x3E3: printf("WM_DDE_UNADVISE\n"); break;
+	    case 0x3E4: printf("WM_DDE_ACK\n"); break;
+	    case 0x3E5: printf("WM_DDE_DATA\n"); break;
+	    case 0x3E6: printf("WM_DDE_REQUEST\n"); break;
+	    case 0x3E7: printf("WM_DDE_POKE\n"); break;
+	    case 0x3E8: printf("WM_DDE_EXECUTE|WM_DDE_LAST\n"); break;
+	    case 0x400: printf("WM_USER\n"); break;
+	    case 0x8000: printf("WM_APP\n"); break;
+

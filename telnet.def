@@ -130,7 +130,7 @@ subcode: do_telnet_read(buf, len)
     $local unsigned char * ts, int c
     ts=$(buf)
     c=*ts
-    print do_telnet_read: $$(len) - $c
+    print do_telnet_read: $$(len) - $c ...
     $while $(len)--
 	c = *ts++
 	$call do_telnet_read_char
@@ -140,6 +140,7 @@ subcode: do_telnet_read(buf, len)
 
     $if out_len
 	tn_ret=from_backend(out_buf, out_len)
+    print "done do_telnet_read"
     $if out_buf
 	free(out_buf)
 
@@ -178,8 +179,9 @@ subcode: da_init(name)
 
 subcode: da_add(name, c)
     $if $(name)_len>=$(name)_size
-	$(name)_size=$(name)_len+256
+	$(name)_size=$(name)_len+1024
 	$(name)_buf=realloc($(name)_buf, $(name)_size)
+	print "da_add, realloc, new address %x", $(name)_buf
     $(name)_buf[$(name)_len++]=$(c)
 
 # -------------------

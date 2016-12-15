@@ -1,0 +1,59 @@
+#---------------------------------------- 
+#-- 32 bit attr for each term char cell
+#--    9 fg, 9 bg, 6 attr, 8 bit intermediate flags
+subcode: attr_defines
+    $define(DATTR_STARTRUN) 0x80000000U
+
+    $define(TATTR_CURSOR)    0x10000000U
+    $define(TATTR_C_RIGHT)   0x20000000U
+    $define(TATTR_C_BLINK)   0x40000000U
+    $define(TATTR_T_BLINK)   0x80000000U
+
+    $define(TATTR_LINE) 0x0F000000U
+    $define(TATTR_WIDE) 0x01000000U
+    $define(TATTR_TOP)  0x02000000U
+    $define(TATTR_BOT)  0x03000000U
+
+    $define(ATTR_INVALID) 0x03FFFFU
+    # 6 bit attributes
+    $define(ATTR_NARROW)  0x800000U
+    $define(ATTR_WIDE)    0x400000U
+    $define(ATTR_BLINK)   0x200000U
+    $define(ATTR_REVERSE) 0x100000U
+    $define(ATTR_UNDER)   0x080000U
+    $define(ATTR_BOLD)    0x040000U
+    # 9 bit FG color and 9 bit BG color
+    $define(ATTR_FGSHIFT) 0
+    $define(ATTR_BGSHIFT) 9
+    $define(ATTR_FGMASK)  0x0001FFU
+    $define(ATTR_BGMASK)  0x03FE00U
+    $define(ATTR_COLOURS) 0x03FFFFU
+    # 0-7 are ANSI colours (KRGYBMCW)
+    # 8-15 are bold version of those colors
+    # 16-231 are 6 x 6 x 6 color cube
+    # 232-255 are 24 gray levels
+    $define(COLOR_DEFFG) 256
+    $define(COLOR_DEFFG_BOLD) 257
+    $define(COLOR_DEFBG) 258
+    $define(COLOR_DEFBG_BOLD) 259
+    $define(COLOR_CURFG) 260
+    $define(COLOR_CURBG) 261
+    $define(ATTR_DEFFG) (COLOR_DEFFG<<ATTR_FGSHIFT)
+    $define(ATTR_DEFBG) (COLOR_DEFBG<<ATTR_BGSHIFT)
+    $define(ATTR_DEFAULT) (ATTR_DEFFG | ATTR_DEFBG)
+
+# ----
+subcode: set_attr_fg(attr, n)
+    $(attr) &= ~ATTR_FGMASK
+    $(attr) |= ($(n))
+
+subcode: set_attr_bg(attr, n)
+    $(attr) &= ~ATTR_BGMASK
+    $(attr) |= ($(n))<<ATTR_BGSHIFT
+
+subcode: get_attr_fg(attr, n)
+    $(n)= $(attr) & ATTR_FGMASK
+
+subcode: get_attr_bg(attr, n)
+    $(n)= ($(attr) & ATTR_BGMASK) >> ATTR_BGSHIFT
+

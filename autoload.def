@@ -1,10 +1,9 @@
 include: cfg.def
 include: backend.def
-include: win32/winsock.def
+include: win32_socket.def
 include: win32/debug.def
 
 subcode:: _autoload
-    $define(snprintf) sprintf_s
     $global HWND hwnd_main
 
 page: autoload

@@ -1,0 +1,17 @@
+include: c/hash.def
+
+subcode:: WinMain_Init
+    $global str_hash p_config: str
+    p_config.$resize 200
+
+subcode: get_config(name, var, default)
+    $(var)=$(default)
+    ts_temp=p_config{$(name)}
+    $if ts_temp
+        $(if:var~s_)
+            $(var)=ts_temp
+        $(elif:var~n_)
+            $(var)=atoi(ts_temp)
+        $(elif:var~f_)
+            $(var)=atof(ts_temp)
+

@@ -78,17 +78,17 @@ subcode:: on_term_finish
     $call bufchain_clear, $.inbuf
 
 fncode: term_data(Terminal *term, ts_data, tn_len)
-    $call debug_term_data
+    #$call debug_term_data
     $call bufchain_add, $.inbuf, ts_data, tn_len
     $call @do_term_data, ts_data, tn_len
     return 0
 
 subcode: debug_term_data
-    $local ts_temp[100]
+    $local ts_temp[101]
     $if tn_len<100
-	strcpy(ts_temp, ts_data)
+	strncpy(ts_temp, ts_data, tn_len)
 	ts_temp[tn_len]='\0'
-	$call debug, "termdata [%d] %s\n", tn_len, ts_temp
+	print "termdata [%d] %s\n", tn_len, ts_temp
 # -------------
 subcode:: function_list
     $list term_notify

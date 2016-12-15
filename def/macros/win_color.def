@@ -1,0 +1,72 @@
+# ---- Colors -----------------------------------------
+subcode:: WinMain_PreWindow
+    $call init_colors
+
+subcode: init_colors
+    $define(NALLCOLOURS) 16+240+6
+    $define(COLOR_DEFFG) 256
+    $define(COLOR_DEFFG_BOLD) 257
+    $define(COLOR_DEFBG) 258
+    $define(COLOR_DEFBG_BOLD) 259
+    $define(COLOR_CURFG) 260
+    $define(COLOR_CURBG) 261
+    $global COLORREF colours[NALLCOLOURS]
+
+    $call fill_color_config
+    $call fill_color_216, colours, 16
+    $call fill_gray_24,   colours, 232
+
+subcode: fill_color_config
+    $call get_config_color, 256, 0xBBBBBB, "color_default"
+    $call get_config_color, 257, 0xFFFFFF, "color_default_bold"
+    $call get_config_color, 258, 0x000000, "color_background"
+    $call get_config_color, 259, 0x555555, "color_background_bold"
+    $call get_config_color, 260, 0x000000, "color_cursor_text"
+    $call get_config_color, 261, 0x00FF00, "color_cursor_back"
+    $call get_config_color, 0, 0x000000, "color_black"
+    $call get_config_color, 1, 0xBB0000, "color_red"
+    $call get_config_color, 2, 0x00BB00, "color_green"
+    $call get_config_color, 3, 0xBBBB00, "color_yellow"
+    $call get_config_color, 4, 0x0000BB, "color_blue"
+    $call get_config_color, 5, 0xBB00BB, "color_magenta"
+    $call get_config_color, 6, 0x00BBBB, "color_cyan"
+    $call get_config_color, 7, 0xBBBBBB, "color_white"
+    $call get_config_color, 8, 0x555555, "color_black_bold"
+    $call get_config_color, 9, 0xFF5555, "color_red_bold"
+    $call get_config_color, 10, 0x55FF55, "color_green_bold"
+    $call get_config_color, 11, 0xFFFF55, "color_yellow_bold"
+    $call get_config_color, 12, 0x5555FF, "color_blue_bold"
+    $call get_config_color, 13, 0xFF55FF, "color_magenta_bold"
+    $call get_config_color, 14, 0x55FFFF, "color_cyan_bold"
+    $call get_config_color, 15, 0xFFFFFF, "color_white_bold"
+
+subcode: get_config_color(color_idx, default, name)
+    ts_temp=hash_getstr(p_config, $(name))
+    tn_ret=0
+    $if ts_temp
+	tn_ret=sscanf(ts_temp, "%x", &colours[$(color_idx)])
+    $if tn_ret==0
+	colours[$(color_idx)]=$(default)
+
+# ----
+subcode: translate_color_index
+    $if tn_i >= 16
+	tn_i += 256 - 16;
+    $if tn_i > NALLCOLOURS
+	return;
+
+# ----
+subcode: fill_color_216(list, offset)
+    $local pc_color6[]={0,95,135,175,215,255}
+    tn_i=$(offset)
+    $for tn_r=0:6
+	$for tn_g=0:6
+	    $for tn_b=0:6
+		$(list)[tn_i]=RGB(pc_color6[tn_r], pc_color6[tn_g], pc_color6[tn_b])
+		tn_i++
+
+subcode: fill_gray_24(list, offset)
+    $for tn_i=0:24
+	tn_shade=tn_i*10+8
+	$(list)[tn_i+$(offset)]=RGB(tn_shade, tn_shade, tn_shade)
+

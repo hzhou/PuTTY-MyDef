@@ -28,8 +28,9 @@ subcode:: function_list
 fncode: term_out(Terminal *term)
     $call @term_out_global
     $local int c
+    print "term_out"
     &call bufchain_char_loop, $.inbuf, c
-	print "termstate=%d, c=%x [%c]\n", $.n_termstate, c, (char)c
+	# print "termstate=%d, c=%x [%c]\n", $.n_termstate, c, (char)c
 	$call @term_out_pre  # Specific feature
 	$call @term_out_pre2 # General feature
 	$if $.n_termstate == termstate_TOPLEVEL

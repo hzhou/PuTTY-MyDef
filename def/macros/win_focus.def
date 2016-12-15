@@ -1,0 +1,14 @@
+subcode:: WinMain_PreUpdate
+    $global b_has_focus=0
+    SetForegroundWindow(hwnd_main);
+    $if GetForegroundWindow() == hwnd_main
+	b_has_focus=1
+
+subcode:: main_on_WM_SETFOCUS
+    b_has_focus=1
+    term_update(term);
+
+subcode:: main_on_WM_KILLFOCUS
+    b_has_focus=0
+    term_update(term);
+

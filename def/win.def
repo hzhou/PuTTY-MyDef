@@ -1,0 +1,74 @@
+include: macros/debug.def
+
+include: macros/win_size.def
+include: macros/win_font.def
+
+# include: macros/attr.def
+# include: macros/win_main.def
+# include: win32/debug.def
+#include: win32/sock.def
+#include: win32/commandline.def
+#include: win32/wndproc.def
+#include: win32/tray.def
+#include: win32/util.def
+# include: win32/font.def
+#include: win32/clipboard.def
+#include: win32/resize.def
+#include: win32/other.def
+#include: win32/frontend.def
+#include: win32/menu.def
+# include: win32/time.def
+#include: win32/keyboard.def
+#include: hack.def
+#include: mouse.def
+#include: palette.def
+#include: win32/color.def
+
+# include: win32/linedisc_unicode.def
+
+#include: front/line_discipline.def
+#include: front/get_userpass.def
+#include: front/paste.def
+
+# ----------------------------------------------------
+page: test
+    $(set:appname=PuTTY-MyDef)
+    $list WinMain
+
+fncode: WinMain
+    # $call debug_on
+    $call @WinMain_Init
+    &call register_wndclass, "$(appname)", WndProc_main
+        $call cursor, IDC_IBEAM
+
+    &call create_window, hwnd_main, "$(appname)"
+        $call style, WS_OVERLAPPEDWINDOW
+        $call @on_window_style
+        $call size, 10, 10, 800, 600
+
+    $call @WinMain_PreShow
+    ShowWindow(hwnd_main, n_cmdshow);
+    $call @WinMain_PreUpdate
+    UpdateWindow(hwnd_main);
+
+    $call @WinMain_PreLoop
+    $call win_loop
+
+    finished:
+    $call @WinMain_CleanUp
+
+#---------------------------------------- 
+subcode:@ main_on_WM_PAINT
+    &call on_paint
+        $(if:0)
+            TextOut(hdc, 10, 10, "Hello World!", 12)
+        $(elif:1)
+            $call test_font
+
+#---------------------------------------- 
+subcode:@ get_config(name, var, default)
+    $(var) = $(default)
+
+subcode: die(msg)
+    # $print $(msg)
+    exit(-1)
